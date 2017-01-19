@@ -31,3 +31,5 @@
 environment
 *.workspace
 *~
+bin/x86_64/*
+lib/x86_64/*
