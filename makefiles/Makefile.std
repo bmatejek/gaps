@@ -2,11 +2,6 @@
 # Makefile setup for GAPS
 #
 
-# location of external includes and libraries
-
-OPENCV_INCLUDE := ../../pkgs/opencv/include/opencv
-OPENCV_LIB := ../../pkgs/opencv/build/lib
-
 
 #
 # Targets
@@ -31,7 +26,7 @@ ARCH=$(shell uname -m)
 
 
 
-INCLUDE_DIRS=-I$(OPENCV_INCLUDE) -I/usr/include/hdf5/serial
+INCLUDE_DIRS=-I/usr/include/hdf5/serial
 
 
 
