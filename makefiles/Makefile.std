@@ -57,9 +57,8 @@ LIB_DIR=../../lib/$(ARCH)
 
 # additional include for Linux based systems
 ifeq ("$(findstring CYGWIN,$(OS))", "CYGWIN")
-EXTERNAL_LIB_DIR=-L$(OPENCV_LIB)
 else
-EXTERNAL_LIB_DIR=-L$(OPENCV_LIB) -L/usr/local/cuda/lib64 -L/usr/lib/x86_64-linux-gnu/hdf5/serial
+EXTERNAL_LIB_DIR=-L/usr/lib/x86_64-linux-gnu/hdf5/serial
 endif
 
 
