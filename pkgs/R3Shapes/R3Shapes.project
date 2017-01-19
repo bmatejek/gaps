@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CodeLite_Project Name="R3Shapes" InternalType="">
+  <Description/>
+  <Dependencies/>
+  <Settings Type="Dynamic Library">
+    <GlobalSettings>
+      <Compiler Options="" C_Options="" Assembler="">
+        <IncludePath Value="."/>
+      </Compiler>
+      <Linker Options="">
+        <LibraryPath Value="."/>
+      </Linker>
+      <ResourceCompiler Options=""/>
+    </GlobalSettings>
+    <Configuration Name="Debug" CompilerType="GCC" DebuggerType="GNU gdb debugger" Type="Dynamic Library" BuildCmpWithGlobalSettings="append" BuildLnkWithGlobalSettings="append" BuildResWithGlobalSettings="append">
+      <Compiler Options="-g" C_Options="-g" Assembler="" Required="yes" PreCompiledHeader="" PCHInCommandLine="no" PCHFlags="" PCHFlagsPolicy="0">
+        <IncludePath Value="."/>
+      </Compiler>
+      <Linker Options="" Required="yes"/>
+      <ResourceCompiler Options="" Required="no"/>
+      <General OutputFile="" IntermediateDirectory="./Debug" Command="" CommandArguments="" UseSeparateDebugArgs="no" DebugArguments="" WorkingDirectory="$(IntermediateDirectory)" PauseExecWhenProcTerminates="yes" IsGUIProgram="no" IsEnabled="yes"/>
+      <Environment EnvVarSetName="&lt;Use Defaults&gt;" DbgSetName="&lt;Use Defaults&gt;">
+        <![CDATA[]]>
+      </Environment>
+      <Debugger IsRemote="no" RemoteHostName="" RemoteHostPort="" DebuggerPath="" IsExtended="no">
+        <DebuggerSearchPaths/>
+        <PostConnectCommands/>
+        <StartupCommands/>
+      </Debugger>
+      <PreBuild/>
+      <PostBuild/>
+      <CustomBuild Enabled="yes">
+        <RebuildCommand/>
+        <CleanCommand>make clean</CleanCommand>
+        <BuildCommand>make</BuildCommand>
+        <PreprocessFileCommand/>
+        <SingleFileCommand/>
+        <MakefileGenerationCommand/>
+        <ThirdPartyToolName>None</ThirdPartyToolName>
+        <WorkingDirectory>$(WorkspacePath)</WorkingDirectory>
+      </CustomBuild>
+      <AdditionalRules>
+        <CustomPostBuild/>
+        <CustomPreBuild/>
+      </AdditionalRules>
+      <Completion EnableCpp11="no" EnableCpp14="no">
+        <ClangCmpFlagsC/>
+        <ClangCmpFlags/>
+        <ClangPP/>
+        <SearchPaths/>
+      </Completion>
+    </Configuration>
+    <Configuration Name="Release" CompilerType="GCC" DebuggerType="GNU gdb debugger" Type="Dynamic Library" BuildCmpWithGlobalSettings="append" BuildLnkWithGlobalSettings="append" BuildResWithGlobalSettings="append">
+      <Compiler Options="" C_Options="" Assembler="" Required="yes" PreCompiledHeader="" PCHInCommandLine="no" PCHFlags="" PCHFlagsPolicy="0">
+        <IncludePath Value="."/>
+      </Compiler>
+      <Linker Options="-O2" Required="yes"/>
+      <ResourceCompiler Options="" Required="no"/>
+      <General OutputFile="" IntermediateDirectory="./Release" Command="" CommandArguments="" UseSeparateDebugArgs="no" DebugArguments="" WorkingDirectory="$(IntermediateDirectory)" PauseExecWhenProcTerminates="yes" IsGUIProgram="no" IsEnabled="yes"/>
+      <Environment EnvVarSetName="&lt;Use Defaults&gt;" DbgSetName="&lt;Use Defaults&gt;">
+        <![CDATA[]]>
+      </Environment>
+      <Debugger IsRemote="no" RemoteHostName="" RemoteHostPort="" DebuggerPath="" IsExtended="no">
+        <DebuggerSearchPaths/>
+        <PostConnectCommands/>
+        <StartupCommands/>
+      </Debugger>
+      <PreBuild/>
+      <PostBuild/>
+      <CustomBuild Enabled="yes">
+        <RebuildCommand/>
+        <CleanCommand>make clean</CleanCommand>
+        <BuildCommand>make</BuildCommand>
+        <PreprocessFileCommand/>
+        <SingleFileCommand/>
+        <MakefileGenerationCommand/>
+        <ThirdPartyToolName>None</ThirdPartyToolName>
+        <WorkingDirectory>$(WorkspacePath)</WorkingDirectory>
+      </CustomBuild>
+      <AdditionalRules>
+        <CustomPostBuild/>
+        <CustomPreBuild/>
+      </AdditionalRules>
+      <Completion EnableCpp11="no" EnableCpp14="no">
+        <ClangCmpFlagsC/>
+        <ClangCmpFlags/>
+        <ClangPP/>
+        <SearchPaths/>
+      </Completion>
+    </Configuration>
+  </Settings>
+  <VirtualDirectory Name="R3Shapes">
+    <File Name="R4Matrix.h"/>
+    <File Name="R3Triangle.cpp"/>
+    <File Name="R3Ray.cpp"/>
+    <File Name="R3Draw.h"/>
+    <File Name="R3Xform.cpp"/>
+    <File Name="R3MeshPropertySet.cpp"/>
+    <File Name="R3MeshSearchTree.cpp"/>
+    <File Name="R3Circle.h"/>
+    <File Name="R3Relate.cpp"/>
+    <File Name="R3Align.cpp"/>
+    <File Name="R3Point.cpp"/>
+    <File Name="R3Surface.cpp"/>
+    <File Name="R3Ellipse.h"/>
+    <File Name="R3Surface.h"/>
+    <File Name="R3Relate.h"/>
+    <File Name="R3Draw.cpp"/>
+    <File Name="R4Matrix.cpp"/>
+    <File Name="R3MeshPropertySet.h"/>
+    <File Name="R3Dist.h"/>
+    <File Name="R3Plane.h"/>
+    <File Name="R3Cont.h"/>
+    <File Name="R3Line.cpp"/>
+    <File Name="R3Mesh.cpp"/>
+    <File Name="R3Cylinder.h"/>
+    <File Name="R3PlanarGrid.h"/>
+    <File Name="R3MeshSearchTree.h"/>
+    <File Name="R3Cone.h"/>
+    <File Name="R3Solid.h"/>
+    <File Name="R3Ellipsoid.cpp"/>
+    <File Name="R3Quaternion.h"/>
+    <File Name="R3Crdsys.cpp"/>
+    <File Name="R3OrientedBox.h"/>
+    <File Name="R3Cont.cpp"/>
+    <File Name="R3Base.h"/>
+    <File Name="R3Sphere.h"/>
+    <File Name="R3Shape.h"/>
+    <File Name="R3Triad.h"/>
+    <File Name="R3Solid.cpp"/>
+    <File Name="R3Point.h"/>
+    <File Name="R3Cylinder.cpp"/>
+    <File Name="R3Mesh.h"/>
+    <File Name="R3Shapes.h"/>
+    <File Name="R3Parall.h"/>
+    <File Name="R3Span.h"/>
+    <File Name="R3Isect.h"/>
+    <File Name="R3Ellipse.cpp"/>
+    <File Name="R3Triangle.h"/>
+    <File Name="R3Vector.h"/>
+    <File Name="R3Crdsys.h"/>
+    <File Name="R3Box.cpp"/>
+    <File Name="R3Xform.h"/>
+    <File Name="R3TriangleArray.h"/>
+    <File Name="R3Triad.cpp"/>
+    <File Name="R3Ellipsoid.h"/>
+    <File Name="R3MeshProperty.cpp"/>
+    <File Name="R3Perp.cpp"/>
+    <File Name="R3Parall.cpp"/>
+    <File Name="R3Affine.h"/>
+    <File Name="ply.h"/>
+    <File Name="R3Halfspace.h"/>
+    <File Name="R3Line.h"/>
+    <File Name="R3Box.h"/>
+    <File Name="R3Circle.cpp"/>
+    <File Name="R3Plane.cpp"/>
+    <File Name="ply.cpp"/>
+    <File Name="R3Cone.cpp"/>
+    <File Name="R3Isect.cpp"/>
+    <File Name="R3Kdtree.cpp"/>
+    <File Name="R3PlanarGrid.cpp"/>
+    <File Name="R3Grid.cpp"/>
+    <File Name="R3Affine.cpp"/>
+    <File Name="R3Dist.cpp"/>
+    <File Name="R3Halfspace.cpp"/>
+    <File Name="R3Shape.cpp"/>
+    <File Name="R3Vector.cpp"/>
+    <File Name="R3Kdtree.h"/>
+    <File Name="R3MeshProperty.h"/>
+    <File Name="R3Shapes.cpp"/>
+    <File Name="R3Align.h"/>
+    <File Name="R3TriangleArray.cpp"/>
+    <File Name="R3OrientedBox.cpp"/>
+    <File Name="R3Span.cpp"/>
+    <File Name="R3Sphere.cpp"/>
+    <File Name="R3Perp.h"/>
+    <File Name="R3Ray.h"/>
+    <File Name="R3Grid.h"/>
+    <File Name="R3Quaternion.cpp"/>
+    <File Name="R3Base.cpp"/>
+    <File Name="R3CharGrid.h"/>
+    <File Name="R3CharGrid.cpp"/>
+  </VirtualDirectory>
+  <Dependencies Name="Debug"/>
+  <Dependencies Name="Release"/>
+</CodeLite_Project>

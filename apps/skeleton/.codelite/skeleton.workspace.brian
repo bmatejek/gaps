@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Workspace>
+  <WorkspaceParserFlags flags="0"/>
+  <WorkspaceParserPaths>
+    <Include Path="../../pkgs"/>
+  </WorkspaceParserPaths>
+  <Environment Name="&lt;Use Defaults&gt;"/>
+  <WorkspaceParserMacros/>
+</Workspace>
