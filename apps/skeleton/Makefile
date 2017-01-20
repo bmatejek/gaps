@@ -14,7 +14,7 @@ CCSRCS=$(NAME).cpp
 ifeq ($(shell uname), Linux)
 PKG_LIBS=-lRNDataStructures -lR3Graphics -lR3Shapes -lR2Shapes -lRNBasics -lpng -ljpeg -lfglut -lX11 -lhdf5_cpp -lhdf5
 else
-PKG_LIBS=-lRNDataStructures -lR3Graphics -lR3Shapes -lR2Shapes -lRNBasics -lfglut -ljpeg -lpng
+PKG_LIBS=-lRNDataStructures -lR3Graphics -lR3Shapes -lR2Shapes -lRNBasics -lfglut -ljpeg -lpng -lhdf5_cpp -lhdf5
 endif
 
 #
