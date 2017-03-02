@@ -143,13 +143,6 @@ static int ReadData(void)
    RNTime start_time;
    start_time.Read();
 
-   if (!machine_labels_filename) {
-       char *filename = new char[4096];
-       sprintf(filename, "machine_labels/%s_machine_labels_seg_28000.h5", prefix);
-       machine_labels_filename = filename;
-       machine_labels_dataset = "main";
-   }
-
    // read in voxel files
    R3Grid **machine_labels = RNReadH5File(machine_labels_filename, machine_labels_dataset);
    if (!machine_labels) { fprintf(stderr, "Failed to read %s from %s\n", machine_labels_dataset, machine_labels_filename); return 0; }
@@ -258,8 +251,6 @@ static void ComputeDistances(void)
     // close file
     fclose(fp);
     
-    printf("%d\n", nendpoints);
-
     // free memory
     delete[] nboundary_elements;
     delete[] element_found;

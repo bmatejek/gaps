@@ -545,9 +545,48 @@ int main(int argc, char **argv)
     if (!ParseArgs(argc, argv))
         exit(-1);
 
+    RNTime start_time;
+    start_time.Read();
     grids = RNReadH5File(input_filename, dataset_name);
     grid = grids[0];
 
+    if (print_verbose) {
+        printf("Read h5 file in %0.2f seconds\n", start_time.Elapsed());
+        printf("  Minimum: %0.2f\n", grid->Minimum());
+        printf("  Maximum: %0.2f\n", grid->Maximum());
+        printf("  Resolution: %d %d %d\n", grid->XResolution(), grid->YResolution(), grid->ZResolution());
+    }
+
+    int grid_maximum = (int) (grid->Maximum() + 0.5);
+    int *unique_grid_values = new int[grid_maximum + 1];
+    for (int iv = 0; iv < grid_maximum + 1; ++iv)
+        unique_grid_values[iv] = 0;
+    for (int iv = 0; iv < grid->NEntries(); ++iv) {
+        int grid_value = (int)(grid->GridValue(iv) + 0.5);
+        unique_grid_values[grid_value] = 1;
+    }
+    int nunique = 0;
+    for (int iv = 0; iv < grid_maximum + 1; ++iv) {
+        nunique += unique_grid_values[iv];
+    }
+
+    // create mapping
+    /*int *mapping = new int[grid_maximum + 1];
+    int seen = 0;
+    for (int iv = 0; iv < grid_maximum + 1; ++iv) {
+        if (unique_grid_values[iv]) {
+            mapping[iv] = seen;
+            seen++;
+        }
+    }
+    
+    for (int iv = 0; iv < grid->NEntries(); ++iv) {
+        int grid_value = (int)(grid->GridValue(iv) + 0.5);
+        grid->SetGridValue(iv, mapping[grid_value]);
+    }
+    
+    RNWriteH5File(&grid, 1, "compressed.h5", "main", TRUE);
+    */
 
     // initialize GLUT
     GLUTInit(&argc, argv);

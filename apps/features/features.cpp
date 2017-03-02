@@ -27,7 +27,7 @@ static const char* segmentation_dataset = NULL;
 
 static RNScalar scaling[3] = { 1, 1, 5 };
 static int resolution[3] = { -1, -1, -1 };
-
+static int nnet_resolution[3] = { 51, 51, 51 };
 
 
 // voxel grids
@@ -1069,6 +1069,99 @@ int CreateLabelFile(void)
 
 
 
+int OutputNeuralNetworkFeatures(void)
+{
+    // create input labels for neural network
+    char label_filename[4096];
+    sprintf(label_filename, "neural_input/%s/neural_network_labels.nnet", prefix);
+    
+    // open the file
+    FILE *label_fp = fopen(label_filename, "wb");
+    if (!label_fp) { fprintf(stderr, "Failed to write to %s\n", label_filename); return 0; }
+    
+    // go through all boundary examples
+    for (int ip = 0; ip < (int)boundary_examples.size(); ++ip) {
+        SegmentPair *pair = boundary_examples[ip];
+        R3Box bbox = pair->bbox;
+        
+        if (bbox.XLength() != maximum_distance[RN_X] * 2 || bbox.YLength() != maximum_distance[RN_Y] * 2 || bbox.ZLength() != maximum_distance[RN_Z] * 2) {
+            continue;
+        }
+        
+        // make sure the bounding box is completely contained inside the world bounding box
+        if (bbox.XMin() < 0 || bbox.XMax() > resolution[RN_X] - 1) continue;
+        if (bbox.YMin() < 0 || bbox.YMax() > resolution[RN_Y] - 1) continue;
+        if (bbox.ZMin() < 0 || bbox.ZMax() > resolution[RN_Z] - 1) continue;
+        
+        // write the value for this pair (merge or no merge)
+        fwrite(&(pair->merge), sizeof(int), 1, label_fp);
+        
+        // get output filename for this feature
+        char output_filename[4096];
+        sprintf(output_filename, "neural_input/%s/neural_network_input_%03dx%03dx%03d_%06d_%06d.nnet", prefix, nnet_resolution[RN_Z], nnet_resolution[RN_Y], nnet_resolution[RN_X], pair->segment_one, pair->segment_two);
+
+        // open the file
+        FILE  *fp = fopen(output_filename, "wb");
+        if (!fp) { fprintf(stderr, "Failed to write to %s\n", output_filename); return 0; }
+        
+        // create a mapping from the bounding box to the smaller feature box
+        R3Grid *input = new R3Grid(nnet_resolution[RN_X], nnet_resolution[RN_Y], nnet_resolution[RN_Z]);
+        
+        // go through every value in the input grid
+        for (int iz = 0; iz < nnet_resolution[RN_Z]; ++iz) {
+            for (int iy = 0; iy < nnet_resolution[RN_Y]; ++iy) {
+                for (int ix = 0; ix < nnet_resolution[RN_X]; ++ix) {
+                    // find the z, y, and x offset for this position
+                    RNScalar zoffset = iz / (RNScalar)nnet_resolution[RN_Z];
+                    RNScalar yoffset = iy / (RNScalar)nnet_resolution[RN_Y];
+                    RNScalar xoffset = ix / (RNScalar)nnet_resolution[RN_X];
+                    
+                    int zloc = (int)(zoffset * bbox.ZLength() + bbox.ZMin() + 0.5);
+                    int yloc = (int)(yoffset * bbox.YLength() + bbox.YMin() + 0.5);
+                    int xloc = (int)(xoffset * bbox.XLength() + bbox.XMin() + 0.5);
+                    
+                    if (zloc < 0 || zloc > segmentation_grid->ZResolution() - 1) input->SetGridValue(ix, iy, iz, FALSE);
+                    else if (yloc < 0 || yloc > segmentation_grid->YResolution() - 1) input->SetGridValue(ix, iy, iz, FALSE);
+                    else if (xloc < 0 || xloc > segmentation_grid->XResolution() - 1) input->SetGridValue(ix, iy, iz, FALSE);
+                    else {
+                        int grid_value = (int)(segmentation_grid->GridValue(xloc, yloc, zloc) + 0.5);
+                    
+                        if (grid_value == pair->segment_one) input->SetGridValue(ix, iy, iz, 1);
+                        else if (grid_value == pair->segment_two) input->SetGridValue(ix, iy, iz, 2);
+                        else input->SetGridValue(ix, iy, iz, 0);
+                    }
+                }
+            }
+        }
+        
+        // write the element of the input grid to the file
+        for (int iz = 0; iz < nnet_resolution[RN_Z]; ++iz) {
+            for (int iy = 0; iy < nnet_resolution[RN_Y]; ++iy) {
+                for (int ix = 0; ix < nnet_resolution[RN_X]; ++ix) {
+                    int grid_value = (int)(input->GridValue(ix, iy, iz) + 0.5);
+                    rn_assertion((0 <= grid_value) && (grid_value <= 2));
+                    
+                    fwrite(&grid_value, sizeof(int), 1, fp);
+                }
+            }
+        }
+        
+        // free memory
+        delete input;
+        
+        // close the file
+        fclose(fp);
+    }
+    
+    // close the file
+    fclose(label_fp);
+    
+    // return success
+    return 1;
+}
+
+
+
 ////////////////////////////////////////////////////////////////////////
 // Program argument parsing
 ////////////////////////////////////////////////////////////////////////
@@ -1098,7 +1191,16 @@ static int ParseArgs(int argc, char** argv)
                 scaling[RN_Y] = atof(*argv);
                 argv++; argc--;
                 scaling[RN_Z] = atof(*argv);
-            } else if(!strcmp(*argv, "-closest")) { argv++; argc--; nclosest = atoi(*argv);
+            } 
+            else if (!strcmp(*argv, "-nnet_resolution")) {
+                argv++; argc--;
+                nnet_resolution[RN_X] = atoi(*argv);
+                argv++; argc--;
+                nnet_resolution[RN_Y] = atoi(*argv);
+                argv++; argc--;
+                nnet_resolution[RN_Z] = atoi(*argv);
+            }
+            else if(!strcmp(*argv, "-closest")) { argv++; argc--; nclosest = atoi(*argv);
             } else if(!strcmp(*argv, "-max_distance")) { argv++; argc--; normalized_distance = atoi(*argv);
             } else { fprintf(stderr, "Invalid program argument: %s\n", *argv); return 0; }
         } else {
@@ -1180,6 +1282,8 @@ int main(int argc, char** argv)
     if (!SaveFeatures()) { fprintf(stderr, "Failed to write to feature attributes file\n"); exit(-1); }
 
     if(!CreateLabelFile()) { fprintf(stderr, "Failed to write to feature label file\n"); exit(-1); }
+
+    if (!OutputNeuralNetworkFeatures()) { fprintf(stderr, "Failed to write neural network input\n"); exit(-1); }
 
     // free memory
     delete[] segmentations;

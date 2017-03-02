@@ -136,7 +136,6 @@ struct SegmentPair {
         , center_point(center_point)
         , bbox(R3null_box)
     {
-        bbox = R3Box(center_point.X() - maximum_distance[RN_X], center_point.Y() - maximum_distance[RN_Y], center_point.Z() - maximum_distance[RN_Z], center_point.X() + maximum_distance[RN_X], center_point.Y() + maximum_distance[RN_Y], center_point.Z() + maximum_distance[RN_Z]);
     }
 
     int index_one;
@@ -601,37 +600,270 @@ static int CalculateExamples(void)
 {
     // clear the previous candidate examples
     boundary_examples.clear();
-    
-    // read in possible merge locations
-    char merge_filename[4096];
-    sprintf(merge_filename, "skeletons/%s_merge_candidates.merge", prefix);
-    
-    FILE *fp = fopen(merge_filename, "rb");
-    if (!fp) { fprintf(stderr, "Failed to read %s\n", merge_filename); return 0; }
-    
-    unsigned long nmerge_pairs;
-    fread(&nmerge_pairs, sizeof(unsigned long), 1, fp);
-    
-    for (unsigned long ip = 0; ip < nmerge_pairs; ++ip) {
-        unsigned long index_one;
-        unsigned long index_two;
-        unsigned long label_one;
-        unsigned long label_two;
-        RNScalar xposition;
-        RNScalar yposition;
-        RNScalar zposition;
-        
-        fread(&index_one, sizeof(unsigned long), 1, fp);
-        fread(&index_two, sizeof(unsigned long), 1, fp);
-        fread(&label_one, sizeof(unsigned long), 1, fp);
-        fread(&label_two, sizeof(unsigned long), 1, fp);
-        fread(&xposition, sizeof(RNScalar), 1, fp);
-        fread(&yposition, sizeof(RNScalar), 1, fp);
-        fread(&zposition, sizeof(RNScalar), 1, fp);
-        
-        boundary_examples.push_back(SegmentPair(segmentation_to_index[label_one], segmentation_to_index[label_two], segmentation_to_gold[label_one] == segmentation_to_gold[label_two], R3Point(xposition, yposition, zposition)));
+
+    // avoid pair duplication
+    int max_segmentation = (int)(segmentation_grid->Maximum() + 0.5) + 1;
+    RNBoolean** considered_merges = new RNBoolean*[max_segmentation];
+    RNBoolean** possible_misses = new RNBoolean*[max_segmentation];
+    for(int is1 = 0; is1 < max_segmentation; ++is1) {
+        considered_merges[is1] = new RNBoolean[max_segmentation];
+        possible_misses[is1] = new RNBoolean[max_segmentation];
+        for(int is2 = 0; is2 < max_segmentation; ++is2) {
+            considered_merges[is1][is2] = FALSE;
+            possible_misses[is1][is2] = FALSE;
+        }
     }
-    
+
+    int nfalse_splits = 0;
+    int nmissed_splits = 0;
+    int ntotal_considered = 0;
+
+    // iterate over all segments
+    RNTime start_time;
+    start_time.Read();
+    if(print_verbose) printf("Generating boundary examples...\n  ");
+    for(int is = 0; is < max_segmentation; ++is) {
+        if(print_verbose) RNProgressBar(is, max_segmentation);
+        // skip if segment does not exist
+        if(segmentation_to_index[is] == -1) continue;
+
+        // get the index for this segment
+        int index = segmentation_to_index[is];
+
+        // initialize the priority queue
+        neuron_segment tmp;
+        RNMinBinaryHeap<neuron_segment*> heap =
+            RNMinBinaryHeap<neuron_segment*>(&tmp, &(tmp.distance), max_segmentation);
+
+        // allocate temporary memory
+        neuron_segment* segment_data = new neuron_segment[max_segmentation];
+        for(int in = 0; in < max_segmentation; ++in) {
+            segment_data[in].segment_id = in;
+            segment_data[in].distance = FLT_MAX;
+            segment_data[in].merge = (segmentation_to_gold[is] == segmentation_to_gold[in]);
+            heap.Insert(in, &(segment_data[in]));
+        }
+
+        // iterate over all endpoints
+        for(unsigned int ie = 0; ie < skeleton_endpoints[index].size(); ++ie) {
+            R3Point position = skeleton_endpoints[index][ie];
+
+            int ix = (int)(position.X() + 0.5);
+            int iy = (int)(position.Y() + 0.5);
+            int iz = (int)(position.Z() + 0.5);
+
+            int box_radius[3] = { (int)(maximum_distance[RN_X] + 0.5), (int)(maximum_distance[RN_Y] + 0.5),
+                (int)(maximum_distance[RN_Z] + 0.5) };
+
+            // consider elements in the bounding box
+            for(int ik = iz - box_radius[RN_Z]; ik <= iz + box_radius[RN_Z]; ++ik) {
+                if(ik < 0 || ik > resolution[RN_Z] - 1) continue;
+                for(int ij = iy - box_radius[RN_Y]; ij <= iy + box_radius[RN_Y]; ++ij) {
+                    if(ij < 0 || ij > resolution[RN_Y] - 1) continue;
+                    for(int ii = ix - box_radius[RN_X]; ii <= ix + box_radius[RN_X]; ++ii) {
+                        if(ii < 0 || ii > resolution[RN_X] - 1) continue;
+
+                        // get this segment id
+                        int neighbor_id = (int)(segmentation_grid->GridValue(ii, ij, ik) + 0.5);
+
+                        // do not consider the same id
+                        if(neighbor_id == is) continue;
+
+                        // should these segments merge
+                        RNScalar distance = (ix - ii) * (ix - ii) * scaling[RN_X] * scaling[RN_X] +
+                            (iy - ij) * (iy - ij) * scaling[RN_Y] * scaling[RN_Y] +
+                            (iz - ik) * (iz - ik) * scaling[RN_Z] * scaling[RN_Z];
+
+                        neuron_segment* neighbor_data = &(segment_data[neighbor_id]);
+
+                        if(distance < neighbor_data->distance) {
+                            neighbor_data->distance = distance;
+                            neighbor_data->center_point = R3Point(ii, ij, ik);
+                            heap.DecreaseKey(neighbor_id, neighbor_data);
+                        }
+                    }
+                }
+            }
+        }
+
+        // add the 10 closest segments
+        for(int ii = 0; ii < nclosest; ++ii) {
+            if(heap.IsEmpty()) break;
+            neuron_segment* segment = heap.DeleteMin();
+
+            if(segment->distance > 3 * normalized_distance * normalized_distance) break;
+
+            if (considered_merges[is][segment->segment_id]) continue;
+
+            boundary_examples.push_back(SegmentPair(segmentation_to_index[is],
+                segmentation_to_index[segment->segment_id], segment->merge, segment->center_point));
+
+            // mark as considered
+            considered_merges[is][segment->segment_id] = TRUE;
+            considered_merges[segment->segment_id][is] = TRUE;
+
+            // no longer a possible miss
+            possible_misses[is][segment->segment_id] = FALSE;
+            possible_misses[segment->segment_id][is] = FALSE;
+
+            // increment counter variables
+            if(segment->merge) nfalse_splits++;
+            ntotal_considered++;
+        }
+
+        while(!heap.IsEmpty()) {
+            neuron_segment* segment = heap.DeleteMin();
+
+            if(considered_merges[is][segment->segment_id]) continue;
+            if(segment->distance > scaling[RN_X] * scaling[RN_X] * resolution[RN_X] * resolution[RN_X] +
+                    scaling[RN_Y] * scaling[RN_Y] * resolution[RN_Y] * resolution[RN_Y] +
+                    scaling[RN_Z] * scaling[RN_Z] * resolution[RN_Z] * resolution[RN_Z])
+                continue;
+
+            if(segment->merge) {
+                possible_misses[is][segment->segment_id] = TRUE;
+                possible_misses[segment->segment_id][is] = TRUE;
+            }
+        }
+
+        // free memory
+        delete[] segment_data;
+    }
+    if(print_verbose) printf("\nDone in %0.2f seconds.\n", start_time.Elapsed());
+
+    // update the center points
+    start_time.Read();
+    if(print_verbose) printf("Updating bounding box centers...\n  ");
+    for(unsigned int ie = 0; ie < boundary_examples.size(); ++ie) {
+        if(print_verbose) RNProgressBar(ie, boundary_examples.size());
+        SegmentPair merge_candidate = boundary_examples[ie];
+
+        // get the segment ids
+        int index_one = merge_candidate.index_one;
+        int index_two = merge_candidate.index_two;
+        int segment_one = index_to_segmentation[index_one];
+        int segment_two = index_to_segmentation[index_two];
+
+        // for now, skip if they are not neighbors
+        if(segmentation_neighbors[segment_one][segment_two]) {
+            // get a list of vertices between these two segments
+            std::vector<R3Point>* points = (segmentations[index_one].size() < segmentations[index_two].size()) ?
+                &(segmentations[index_one]) :
+                &(segmentations[index_two]);
+            std::vector<R3Point> boundary = std::vector<R3Point>();
+
+            // go through all of the points
+            for(unsigned int ip = 0; ip < points->size(); ++ip) {
+                R3Point point = (*points)[ip];
+                int ix = (int)(point.X() + 0.5);
+                int iy = (int)(point.Y() + 0.5);
+                int iz = (int)(point.Z() + 0.5);
+
+                int segment_id = segmentation_grid->GridValue(ix, iy, iz);
+                int other_segment_id = (segment_id == segment_one) ? segment_two : segment_one;
+
+                // see if this has segment_two has a neighbor
+                if(ix > 0) {
+                    int neighbor_id = segmentation_grid->GridValue(ix - 1, iy, iz);
+                    if(neighbor_id == other_segment_id) boundary.push_back(R3Point(ix - 0.5, iy, iz));
+                }
+                if(ix < resolution[RN_X] - 1) {
+                    int neighbor_id = segmentation_grid->GridValue(ix + 1, iy, iz);
+                    if(neighbor_id == other_segment_id) boundary.push_back(R3Point(ix + 0.5, iy, iz));
+                }
+                if(iy > 0) {
+                    int neighbor_id = segmentation_grid->GridValue(ix, iy - 1, iz);
+                    if(neighbor_id == other_segment_id) boundary.push_back(R3Point(ix, iy - 0.5, iz));
+                }
+                if(iy < resolution[RN_Y] - 1) {
+                    int neighbor_id = segmentation_grid->GridValue(ix, iy + 1, iz);
+                    if(neighbor_id == other_segment_id) boundary.push_back(R3Point(ix, iy + 0.5, iz));
+                }
+                if(iz > 0) {
+                    int neighbor_id = segmentation_grid->GridValue(ix, iy, iz - 1);
+                    if(neighbor_id == other_segment_id) boundary.push_back(R3Point(ix, iy, iz - 0.5));
+                }
+                if(iz < resolution[RN_Z] - 1) {
+                    int neighbor_id = segmentation_grid->GridValue(ix, iy, iz + 1);
+                    if(neighbor_id == other_segment_id) boundary.push_back(R3Point(ix, iy, iz + 0.5));
+                }
+            }
+
+            // iterate through all points on the boundary
+            R3Box bounding_box = R3null_box;
+            for(unsigned int ip = 0; ip < boundary.size(); ++ip) {
+                bounding_box.Union(boundary[ip]);
+            }
+
+            // set the center for this example
+            R3Point center = bounding_box.Centroid();
+            boundary_examples[ie].center_point = center;
+
+            RNScalar xradius = 1.5 * bounding_box.AxisRadius(RN_X);
+            RNScalar yradius = 1.5 * bounding_box.AxisRadius(RN_Y);
+            RNScalar zradius = 1.5 * bounding_box.AxisRadius(RN_Z);
+
+            if(xradius < maximum_distance[RN_X]) xradius = maximum_distance[RN_X];
+            if(yradius < maximum_distance[RN_Y]) yradius = maximum_distance[RN_Y];
+            if(zradius < maximum_distance[RN_Z]) zradius = maximum_distance[RN_Z];
+
+            boundary_examples[ie].bbox = R3Box(center.X() - xradius, center.Y() - yradius, center.Z() - zradius,
+                center.X() + xradius, center.Y() + yradius, center.Z() + zradius);
+        } else {
+            R3Point first_point = boundary_examples[ie].center_point;
+
+            // get the segment to which this index belongs
+            int grid_value = (int)(segmentation_grid->GridValue(first_point) + 0.5);
+
+            // get the grid value, if it equals segment one, iterate through segment two boundary points
+            rn_assertion(grid_value == segment_one || grid_value == segment_two);
+            std::vector<R3Point>* points =
+                (grid_value == segment_one) ? &(segmentations[index_two]) : &(segmentations[index_one]);
+
+            R3Point middle_point;
+            RNScalar closest_distance = FLT_MAX;
+            for(unsigned int ip = 0; ip < points->size(); ++ip) {
+                R3Point second_point = (*points)[ip];
+                RNScalar distance = R3SquaredDistance(first_point, second_point);
+
+                // update if the closest poitn
+                if(distance < closest_distance) {
+                    closest_distance = distance;
+                    middle_point = (first_point + second_point) / 2;
+                }
+            }
+
+            // create the bounding box
+            RNScalar xradius = maximum_distance[RN_X];
+            RNScalar yradius = maximum_distance[RN_Y];
+            RNScalar zradius = maximum_distance[RN_Z];
+
+            boundary_examples[ie].center_point = middle_point;
+            boundary_examples[ie].bbox =
+                R3Box(middle_point.X() - xradius, middle_point.Y() - yradius, middle_point.Z() - zradius,
+                    middle_point.X() + xradius, middle_point.Y() + yradius, middle_point.Z() + zradius);
+        }
+    }
+    if(print_verbose) printf("\ndone in %0.2f seconds.\n", start_time.Elapsed());
+
+    // determine the number of non-considered false splits
+    for(int is1 = 0; is1 < max_segmentation; ++is1) {
+        for(int is2 = is1 + 1; is2 < max_segmentation; ++is2) {
+            if(possible_misses[is1][is2]) nmissed_splits++;
+        }
+    }
+
+    // free memory
+    for(int is = 0; is < max_segmentation; ++is) delete[] considered_merges[is];
+    delete[] considered_merges;
+
+    // print out the number of entries and the number of false splits
+    printf("Maximum Distance: %d\n", normalized_distance);
+    printf("  Closest: %d\n", nclosest);
+    printf("  False Splits: %d\n", nfalse_splits);
+    printf("  Total Pairs: %u\n", ntotal_considered);
+    printf("  Missed splits: %d\n", nmissed_splits);
+
     return 1;
 }
 
@@ -1791,7 +2023,7 @@ int main(int argc, char** argv)
     }
 
     // make sure that no boundary pairs have the same indices
-    /*for (unsigned int ip1 = 0; ip1 < boundary_examples.size(); ++ip1) {
+    for (unsigned int ip1 = 0; ip1 < boundary_examples.size(); ++ip1) {
         int pair_one_index_one = boundary_examples[ip1].index_one;
         int pair_one_index_two = boundary_examples[ip1].index_two;
         for (unsigned int ip2 = ip1 + 1; ip2 < boundary_examples.size(); ++ip2) {
@@ -1801,7 +2033,7 @@ int main(int argc, char** argv)
             if (pair_one_index_one == pair_two_index_one) rn_assertion(pair_one_index_two != pair_two_index_two);
             if (pair_one_index_one == pair_two_index_two) rn_assertion(pair_one_index_two != pair_two_index_one);
         }
-    }*/
+    }
 
     printf("%d\n", boundary_examples.size());
 
