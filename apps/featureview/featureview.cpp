@@ -24,6 +24,7 @@
 static int print_debug = 0;
 static int print_verbose = 0;
 static const char* prefix = NULL;
+static int window_width[3] = { -1, -1, -1 };
 
 
 
@@ -105,7 +106,29 @@ static int ReadFeature(int index)
 
     // read the feature into an R3Grid
     R3Grid **grids = RNReadH5File(feature_filename, "main");
-    grid = grids[0];
+    
+    if (window_width[RN_X] > 0 && window_width[RN_Y] > 0 && window_width[RN_Z] > 0) {
+        grid = new R3Grid(window_width[RN_X], window_width[RN_Y], window_width[RN_Z]);
+
+        // iterate over all elements in the new grid
+        for (int iz = 0; iz < window_width[RN_Z]; ++iz) {
+            for (int iy = 0; iy < window_width[RN_Y]; ++iy) {
+                for (int ix = 0; ix < window_width[RN_X]; ++ix) {
+                    int iw = (int)(grids[0]->ZResolution() / (float)window_width[RN_Z] * iz);
+                    int iv = (int)(grids[0]->YResolution() / (float)window_width[RN_Y] * iy);
+                    int iu = (int)(grids[0]->XResolution() / (float)window_width[RN_X] * ix);
+
+                    grid->SetGridValue(ix, iy, iz, grids[0]->GridValue(iu, iv, iw));
+                }
+            }
+        }
+
+        delete grids[0];
+    }
+    else {
+        grid = grids[0];
+    }
+
     delete[] grids;
 
     // return success
@@ -429,13 +452,18 @@ static int ParseArgs(int argc, char** argv)
 {
     // parse arguments
     argc--; argv++;
-    while(argc > 0) {
-        if((*argv)[0] == '-') {
-            if(!strcmp(*argv, "-v")) print_verbose = 1;
-            else if(!strcmp(*argv, "-debug")) print_debug = 1;
+    while (argc > 0) {
+        if ((*argv)[0] == '-') {
+            if (!strcmp(*argv, "-v")) print_verbose = 1;
+            else if (!strcmp(*argv, "-debug")) print_debug = 1;
+            else if (!strcmp(*argv, "-window_width")) {
+                argv++; argc--; window_width[RN_X] = atoi(*argv);
+                argv++; argc--; window_width[RN_Y] = atoi(*argv);
+                argv++; argc--; window_width[RN_Z] = atoi(*argv);
+            }
             else { fprintf(stderr, "Invalid program argument: %s\n", *argv); return 0; }
         } else {
-            if(!prefix) { prefix = *argv; } 
+            if (!prefix) { prefix = *argv; } 
             else { fprintf(stderr, "Invalid program argument: %s\n", *argv); return 0; }
         }
         argv++; argc--;
