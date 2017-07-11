@@ -34,8 +34,8 @@ static const char* prefix = NULL;
 
 // program variables
 
-static RNScalar scaling[3] = { 6, 6, 30 };
-static int resolution[3] = { -1, -1, -1 };
+static RNScalar resolution[3] = { 6, 6, 30 };
+static int grid_size[3] = { -1, -1, -1 };
 static R3Affine transformation = R3null_affine;
 static R3Viewer* viewer = NULL;
 static R3Box world_box;
@@ -249,16 +249,16 @@ static int ReadData(void)
     grid = grids[0];
     delete[] grids;
 
-    resolution[RN_X] = grid->XResolution();
-    resolution[RN_Y] = grid->YResolution();
-    resolution[RN_Z] = grid->ZResolution();
+    grid_size[RN_X] = grid->XResolution();
+    grid_size[RN_Y] = grid->YResolution();
+    grid_size[RN_Z] = grid->ZResolution();
 
     // print statistics
     if(print_verbose) {
         printf("Read voxel grid...\n");
         printf("  Time = %.2f seconds\n", start_time.Elapsed());
-        printf("  Resolution = (%d %d %d)\n", grid->XResolution(), grid->YResolution(), grid->ZResolution());
-        printf("  Scaling = (%0.2lf %0.2lf %0.2lf)\n", scaling[RN_X], scaling[RN_Y], scaling[RN_Z]);
+        printf("  Grid Size = (%d %d %d)\n", grid->XResolution(), grid->YResolution(), grid->ZResolution());
+        printf("  Resolution = (%0.2lf %0.2lf %0.2lf)\n", resolution[RN_X], resolution[RN_Y], resolution[RN_Z]);
     }
 
     // return success
@@ -277,7 +277,7 @@ static int ReadMergeCandidates(void)
     FILE *fp = fopen(candidate_filename, "rb");
     if (!fp) { fprintf(stderr, "Failed to read %s\n", candidate_filename); return 0; }
 
-    fread(&ncandidates, sizeof(unsigned int), 1, fp);
+    if (fread(&ncandidates, sizeof(unsigned int), 1, fp) != 1) return 0;
 
     // read in all of the candidates
     candidates = new MergeCandidate[ncandidates];
@@ -290,12 +290,12 @@ static int ReadMergeCandidates(void)
         unsigned long ground_truth;
 
         // read all of the data for this candidate
-        fread(&label_one, sizeof(unsigned long), 1, fp);
-        fread(&label_two, sizeof(unsigned long), 1, fp);
-        fread(&z, sizeof(unsigned long), 1, fp);
-        fread(&y, sizeof(unsigned long), 1, fp);
-        fread(&x, sizeof(unsigned long), 1, fp);
-        fread(&ground_truth, sizeof(unsigned long), 1, fp);
+        if (fread(&label_one, sizeof(unsigned long), 1, fp) != 1) return 0;
+        if (fread(&label_two, sizeof(unsigned long), 1, fp) != 1) return 0;
+        if (fread(&z, sizeof(unsigned long), 1, fp) != 1) return 0;
+        if (fread(&y, sizeof(unsigned long), 1, fp) != 1) return 0;
+        if (fread(&x, sizeof(unsigned long), 1, fp) != 1) return 0;
+        if (fread(&ground_truth, sizeof(unsigned long), 1, fp) != 1) return 0;
 
         candidates[iv] = MergeCandidate(label_one, label_two, x, y, z, ground_truth);
     }
@@ -390,9 +390,9 @@ static void
 IndexToIndices(int index, int& ix, int& iy, int& iz)
 {
   // Set indices of grid value at index
-  iz = index / (resolution[RN_X] * resolution[RN_Y]);
-  iy = (index - iz * resolution[RN_X] * resolution[RN_Y]) / resolution[RN_X];
-  ix = index % resolution[RN_X];
+  iz = index / (grid_size[RN_X] * grid_size[RN_Y]);
+  iy = (index - iz * grid_size[RN_X] * grid_size[RN_Y]) / grid_size[RN_X];
+  ix = index % grid_size[RN_X];
 }
 
 
@@ -462,24 +462,24 @@ static void DrawSegmentations(void)
 
         // draw the bounding box
         R3Box bounding_box = R3Box(
-            candidate.X() - maximum_distance / scaling[RN_X], 
-            candidate.Y() - maximum_distance / scaling[RN_Y], 
-            candidate.Z() - maximum_distance / scaling[RN_Z], 
-            candidate.X() + maximum_distance / scaling[RN_X], 
-            candidate.Y() + maximum_distance / scaling[RN_Y], 
-            candidate.Z() + maximum_distance / scaling[RN_Z]
+            candidate.X() - maximum_distance / resolution[RN_X], 
+            candidate.Y() - maximum_distance / resolution[RN_Y], 
+            candidate.Z() - maximum_distance / resolution[RN_Z], 
+            candidate.X() + maximum_distance / resolution[RN_X], 
+            candidate.Y() + maximum_distance / resolution[RN_Y], 
+            candidate.Z() + maximum_distance / resolution[RN_Z]
         );
         bounding_box.Outline();
 
         // draw the central point
         RNScalar radius = 10.0;
         R3Box central_point = R3Box(
-            candidate.X() - radius / scaling[RN_X],
-            candidate.Y() - radius / scaling[RN_Y], 
-            candidate.Z() - radius / scaling[RN_Z], 
-            candidate.X() + radius / scaling[RN_X], 
-            candidate.Y() + radius / scaling[RN_Y], 
-            candidate.Z() + radius / scaling[RN_Z]
+            candidate.X() - radius / resolution[RN_X],
+            candidate.Y() - radius / resolution[RN_Y], 
+            candidate.Z() - radius / resolution[RN_Z], 
+            candidate.X() + radius / resolution[RN_X], 
+            candidate.Y() + radius / resolution[RN_Y], 
+            candidate.Z() + radius / resolution[RN_Z]
         );
         central_point.Draw();
     }
@@ -558,7 +558,7 @@ void GLUTRedraw(void)
         sprintf(title, "Skeleton Visualizer - %d\n", candidate_index);    
     }
     else {
-        sprintf(title, "Skeleton Visualizer - %d\n", index_to_label[segmentation_index]);
+        sprintf(title, "Skeleton Visualizer - %lu\n", index_to_label[segmentation_index]);
     }    
     glutSetWindowTitle(title);
 
@@ -831,14 +831,7 @@ static int ParseArgs(int argc, char** argv)
         if((*argv)[0] == '-') {
             if(!strcmp(*argv, "-v")) print_verbose = 1;
             else if(!strcmp(*argv, "-debug")) print_debug = 1;
-            else if(!strcmp(*argv, "-scaling")) {
-                argv++; argc--;
-                scaling[RN_X] = atof(*argv);
-                argv++; argc--;
-                scaling[RN_Y] = atof(*argv);
-                argv++; argc--;
-                scaling[RN_Z] = atof(*argv);
-            } else if(!strcmp(*argv, "-max_distance")) { argv++; argc--; maximum_distance = atoi(*argv); } 
+            else if(!strcmp(*argv, "-max_distance")) { argv++; argc--; maximum_distance = atoi(*argv); } 
             else { fprintf(stderr, "Invalid program argument: %s\n", *argv); return 0; }
         } else {
             if(!prefix) prefix = *argv;
@@ -881,10 +874,10 @@ int main(int argc, char** argv)
     ReadMergeCandidates();
 
     // set world box
-    world_box = R3Box(0, 0, 0, resolution[RN_X] * scaling[RN_X], resolution[RN_Y] * scaling[RN_Y], resolution[RN_Z] * scaling[RN_Z]);
+    world_box = R3Box(0, 0, 0, resolution[RN_X] * grid_size[RN_X], resolution[RN_Y] * grid_size[RN_Y], resolution[RN_Z] * grid_size[RN_Z]);
     
     // get the transformation
-    transformation = R3Affine(R4Matrix(scaling[RN_X], 0, 0, 0, 0, scaling[RN_Y], 0, 0, 0, 0, scaling[RN_Z], 0, 0, 0, 0, 1));
+    transformation = R3Affine(R4Matrix(resolution[RN_X], 0, 0, 0, 0, resolution[RN_Y], 0, 0, 0, 0, resolution[RN_Z], 0, 0, 0, 0, 1));
 
     // create viewer
     viewer = CreateViewer();
