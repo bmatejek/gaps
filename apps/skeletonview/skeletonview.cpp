@@ -137,7 +137,7 @@ static int ReadSWCFile(int index)
 
     std::ifstream fd(input_filename);
     if(!fd.is_open()) {
-        fprintf(stderr, "Failed to read %s\n", input_filename);
+        if (print_debug) fprintf(stderr, "Failed to read %s\n", input_filename);
         return 0;
     }
 

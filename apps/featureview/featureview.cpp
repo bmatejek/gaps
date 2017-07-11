@@ -469,6 +469,10 @@ int main(int argc, char** argv)
     // read the first feature
     if (!ReadFeature(feature_index)) exit(-1);
 
+    if (print_verbose) {
+        printf("Resolution = (%d %d %d)\n", grid->XResolution(), grid->YResolution(), grid->ZResolution());
+    }
+
     // set world box
     world_box = R3Box(0, 0, 0, grid->XResolution(), grid->YResolution(), grid->ZResolution());
     
