@@ -20,6 +20,7 @@ target:
 	cd features; $(MAKE) $(TARGET)
 	cd featureview; $(MAKE) $(TARGET)
 	cd h5view; $(MAKE) $(TARGET)
+	cd ebrogold; $(MAKE) $(TARGET)
 	cd neuronview; $(MAKE) $(TARGET)
 	cd skeleton; $(MAKE) $(TARGET)
 	cd skeletonview; $(MAKE) $(TARGET)

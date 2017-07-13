@@ -37,8 +37,8 @@ static const char* prefix = NULL;
 static RNScalar resolution[3] = { 6, 6, 30 };
 static int grid_size[3] = { -1, -1, -1 };
 static R3Affine transformation = R3null_affine;
-static R3Viewer* viewer = NULL;
-static R3Box world_box;
+static R3Viewer *viewer = NULL;
+static R3Box world_box = R3null_box;
 
 
 
@@ -61,7 +61,7 @@ static int GLUTmodifiers = 0;
 
 // color arrays
 
-static RNScalar background_color[] = { 0, 0, 0 };
+static RNScalar background_color[3] = { 0, 0, 0 };
 
 
 
