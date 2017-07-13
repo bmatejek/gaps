@@ -91,7 +91,7 @@ static int show_merge_candidate = 1;
 static unsigned int segmentation_index = 1;
 static unsigned int candidate_index = 0;
 static unsigned int ncandidates;
-static RNScalar downsample_rate = 25.0;
+static RNScalar downsample_rate = 6.0;
 
 
 
@@ -363,17 +363,30 @@ static void LabelToIndexMapping(void)
     }
 
     // iterate over the entire volume
-    for (long iv = 0; iv < grid->NEntries(); ++iv) {
-        unsigned long label = (unsigned long)(grid->GridValue(iv) + 0.5);
-        // skip background
-        if (label == 0) continue;
+    int iv = 0;
+    for (int iz = 0; iz < grid->ZResolution(); ++iz) {
+        for (int iy = 0; iy < grid->YResolution(); ++iy) {
+            for (int ix = 0; ix < grid->XResolution(); ++ix, ++iv) {
+                unsigned long label = (unsigned long)(grid->GridValue(ix, iy, iz) + 0.5);
+                if (!label) continue;
 
-        // get this index
-        unsigned long index = label_to_index[label];
-        rn_assertion((0 < index) && (index < nunique_labels));
+                // is this pixel boundary
+                RNBoolean boundary = FALSE;
+                if (ix > 0 && label != (unsigned long)(grid->GridValue(ix - 1, iy, iz) + 0.5)) boundary = TRUE;
+                if (iy > 0 && label != (unsigned long)(grid->GridValue(ix, iy - 1, iz) + 0.5)) boundary = TRUE;
+                if (iz > 0 && label != (unsigned long)(grid->GridValue(ix, iy, iz - 1) + 0.5)) boundary = TRUE;
+                if (ix < grid_size[RN_X] - 1 && label != (unsigned long)(grid->GridValue(ix + 1, iy, iz) + 0.5)) boundary = TRUE;
+                if (iy < grid_size[RN_Y] - 1 && label != (unsigned long)(grid->GridValue(ix, iy + 1, iz) + 0.5)) boundary = TRUE;
+                if (iz < grid_size[RN_Z] - 1 && label != (unsigned long)(grid->GridValue(ix, iy, iz + 1) + 0.5)) boundary = TRUE;
 
-        // add to the vector
-        segmentations[index].push_back(iv);
+                // get this index
+                unsigned long index = label_to_index[label];
+                rn_assertion((0 < index) && (index < nunique_labels));
+
+                // add to the vector
+                if (boundary) segmentations[index].push_back(iv);
+            }
+        }
     }
 
     // remove the grid from memory 
@@ -602,10 +615,9 @@ void GLUTMotion(int x, int y)
         viewer->RotateWorld(1.0, origin, x, y, dx, dy);
     else if(GLUTbutton[1])
         viewer->ScaleWorld(1.0, origin, x, y, dx, dy);
-    else if(GLUTbutton[2]) {
+    else if(GLUTbutton[2])
         viewer->TranslateWorld(1.0, origin, x, y, dx, dy);
-    }
-
+    
     // redisplay if a mouse was down
     if(GLUTbutton[0] || GLUTbutton[1] || GLUTbutton[2]) glutPostRedisplay();
 
@@ -788,17 +800,17 @@ static R3Viewer* CreateViewer(void)
     RNTime start_time;
     start_time.Read();
 
-    if(world_box.IsEmpty()) RNAbort("Error in CreateViewer - box is empty");
-    RNLength r = world_box.DiagonalRadius();
-    if(r < 0 || RNIsInfinite(r)) RNAbort("Error in CreateViewer - r must be positive finite");
+    if (world_box.IsEmpty()) RNAbort("Error in CreateViewer - box is empty");
+    RNLength radius = world_box.DiagonalRadius();
+    if (radius < 0 || RNIsInfinite(radius)) RNAbort("Error in CreateViewer - radius must be positive finite");
 
     // set up camera view looking down the z axis
     static R3Vector initial_camera_towards = R3Vector(0.0, 0.0, -1.5);
     static R3Vector initial_camera_up = R3Vector(0.0, 1.0, 0.0);
-    R3Point initial_camera_origin = world_box.Centroid() - initial_camera_towards * 2.5 * r;
-    R3Camera camera(initial_camera_origin, initial_camera_towards, initial_camera_up, 0.4, 0.4, 0.1 * r, 1000.0 * r);
+    R3Point initial_camera_origin = world_box.Centroid() - initial_camera_towards * 2.5 * radius;
+    R3Camera camera(initial_camera_origin, initial_camera_towards, initial_camera_up, 0.4, 0.4, 0.1 * radius, 1000.0 * radius);
     R2Viewport viewport(0, 0, GLUTwindow_width, GLUTwindow_height);
-    R3Viewer* viewer = new R3Viewer(camera, viewport);
+    R3Viewer *viewer = new R3Viewer(camera, viewport);
 
     // print statistics
     if(print_verbose) {
@@ -881,7 +893,7 @@ int main(int argc, char** argv)
 
     // create viewer
     viewer = CreateViewer();
-    if(!viewer) exit(-1);
+    if (!viewer) exit(-1);
 
     // initialize GLUT
     GLUTInit(&argc, argv);
