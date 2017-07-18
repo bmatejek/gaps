@@ -12,18 +12,20 @@
 
 
 
-// constants
-
-static const int ngrids = 2;
-
-
-
 // GLUT defines
 
 #define ENTER 13
+#define CTRLZ 26
 #define ESCAPE 27
 #define SPACEBAR 32
 
+
+
+// grid enumeration defines
+
+#define GRID_ONE 0
+#define GRID_TWO 1
+#define NGRIDS 2
 
 
 ////////////////////////////////////////////////////////////////////////
@@ -34,8 +36,6 @@ struct RNMeta {
     // instance variables
     int resolution[3];
     char prefix[4096];
-    char boundary_filename[4096];
-    char boundary_dataset[128];
     char image_filename[4096];
     char image_dataset[128];
     char rhoana_filename[4096];
@@ -75,7 +75,8 @@ struct MergeCandidate {
 // program arguments
 
 static int print_verbose = 0;
-static const char *prefixes[ngrids] = { NULL, NULL };
+static const char *prefixes[NGRIDS] = { NULL, NULL };
+static unsigned long threshold = 10000;
 
 
 
@@ -83,7 +84,7 @@ static const char *prefixes[ngrids] = { NULL, NULL };
 
 static int resolution[3] = { -1, -1, -1 };
 static int grid_size[3] = { -1, -1, -1 };
-static RNMeta meta_data[ngrids];
+static RNMeta meta_data[NGRIDS];
 static R3Affine transformation = R3null_affine;
 static R3Viewer *viewer = NULL;
 static R3Box world_box = R3null_box;
@@ -92,9 +93,10 @@ static R3Box world_box = R3null_box;
 
 // voxel grids
 
-static R3Grid *boundary_grids[ngrids] = { NULL, NULL };
-static R3Grid *image_grids[ngrids] = { NULL, NULL };
-static R3Grid *rhoana_grids[ngrids] = { NULL, NULL };
+static R3Grid *image_grids[NGRIDS] = { NULL, NULL };
+// combined image grid
+static R3Grid *image_grid = NULL;
+static R3Grid *rhoana_grids[NGRIDS] = { NULL, NULL };
 
 
 
@@ -117,9 +119,9 @@ static RNScalar background_color[3] = { 0, 0, 0 };
 
 // mapping and random access variables
 
-static std::map<unsigned long, unsigned long> label_to_index[ngrids];
-static unsigned long *index_to_label[ngrids] = { NULL, NULL };
-static std::vector<unsigned long> *segmentations[ngrids] = { NULL, NULL };
+static std::map<unsigned long, unsigned long> label_to_index[NGRIDS];
+static unsigned long *index_to_label[NGRIDS] = { NULL, NULL };
+static std::vector<unsigned long> *segmentations[NGRIDS] = { NULL, NULL };
 static std::vector<MergeCandidate> candidates;
 
 
@@ -127,8 +129,24 @@ static std::vector<MergeCandidate> candidates;
 // display variables
 
 static int show_bbox = 1;
-static RNScalar downsample_rate = 6.0;
+static RNScalar downsample_rate = 3.0;
 static int candidate_index = 0;
+
+
+
+// slice display variables
+
+static int show_slice = 1;
+static int selected_slice_index[3] = { 0, 0, 0 };
+static int projection_dim = RN_Z;
+
+
+
+// save decisions
+
+enum DECISION { YES, NO, UNDECIDED };
+std::vector<enum DECISION> decisions = std::vector<enum DECISION>();
+
 
 
 
@@ -156,12 +174,34 @@ ReadMetaData(const char *prefix, int index)
     // read in requisite information
     if (!fgets(comment, 4096, fp)) return 0;
     if (fscanf(fp, "%dx%dx%d\n", &(meta_data[index].resolution[RN_X]), &(meta_data[index].resolution[RN_Y]), &(meta_data[index].resolution[RN_Z])) != 3) return 0;
+    
+    // skip affinities
     if (!fgets(comment, 4096, fp)) return 0;
-    if (fscanf(fp, "%s %s\n", meta_data[index].boundary_filename, meta_data[index].boundary_dataset) != 2) return 0;
+    if (!fgets(comment, 4096, fp)) return 0;
+
+    // skip boundaries
+    if (!fgets(comment, 4096, fp)) return 0;
+    if (!fgets(comment, 4096, fp)) return 0;
+
+    // skip gold
+    if (!fgets(comment, 4096, fp)) return 0;
+    if (!fgets(comment, 4096, fp)) return 0;
+
+    // read image
     if (!fgets(comment, 4096, fp)) return 0;
     if (fscanf(fp, "%s %s\n", meta_data[index].image_filename, meta_data[index].image_dataset) != 2) return 0;
+
+    // skip mask
+    if (!fgets(comment, 4096, fp)) return 0;
+    if (!fgets(comment, 4096, fp)) return 0;
+
+    // read segmentation
     if (!fgets(comment, 4096, fp)) return 0;
     if (fscanf(fp, "%s %s\n", meta_data[index].rhoana_filename, meta_data[index].rhoana_dataset) != 2) return 0;
+
+    // skip synapse
+    if (!fgets(comment, 4096, fp)) return 0;
+    if (!fgets(comment, 4096, fp)) return 0;
 
     // update the global resolution
     if (index == 0) {
@@ -198,12 +238,7 @@ ReadVoxelGrids(int index)
     start_time.Read();
 
     // read in all of the voxel grids
-    R3Grid **grids = RNReadH5File(meta_data[index].boundary_filename, meta_data[index].boundary_dataset);
-    if (!grids) { fprintf(stderr, "Failed to read %s\n", meta_data[index].boundary_filename); return 0; }
-    boundary_grids[index] = grids[0];
-    delete[] grids;
-
-    grids = RNReadH5File(meta_data[index].image_filename, meta_data[index].image_dataset);
+    R3Grid **grids = RNReadH5File(meta_data[index].image_filename, meta_data[index].image_dataset);
     if (!grids) { fprintf(stderr, "Failed to read %s\n", meta_data[index].image_filename); return 0; }
     image_grids[index] = grids[0];
     delete[] grids;
@@ -223,6 +258,8 @@ ReadVoxelGrids(int index)
             rn_assertion(grid_size[dim] == rhoana_grids[index]->Resolution(dim));
     }
 
+    image_grids[index]->SetWorldToGridTransformation(meta_data[index].world_box);
+
     // print information
     if (print_verbose) {
         printf("Read h5 files in %0.2f seconds for %s:\n", start_time.Elapsed(), meta_data[index].prefix);
@@ -235,6 +272,74 @@ ReadVoxelGrids(int index)
     return 1;
 }
 
+
+
+static int ReadOverlapCandidates(void)
+{
+    // get filename
+    char overlap_filename[4096];
+    sprintf(overlap_filename, "features/ebro/%s-%s-%lu.candidates", prefixes[GRID_ONE], prefixes[GRID_TWO], threshold);
+
+    // open file
+    FILE *fp = fopen(overlap_filename, "rb"); 
+    if (!fp) { fprintf(stderr, "Failed to open %s\n", overlap_filename); return 0; }
+
+    // find the number of candidates
+    unsigned long ncandidates;
+    if (fread(&ncandidates, sizeof(unsigned long), 1, fp) != 1) return 0;
+
+    // initialize empty candidate vector
+    candidates = std::vector<struct MergeCandidate>();
+
+    // read all candidates
+    for (unsigned long iv = 0; iv < ncandidates; ++iv) {
+        unsigned long label_one;
+        unsigned long label_two;
+
+        if (fread(&label_one, sizeof(unsigned long), 1, fp) != 1) return 0;
+        if (fread(&label_two, sizeof(unsigned long), 1, fp) != 1) return 0;
+
+        unsigned long index_one = label_to_index[GRID_ONE][label_one];
+        unsigned long index_two = label_to_index[GRID_TWO][label_two];
+
+        struct MergeCandidate candidate = MergeCandidate(label_one, label_two, index_one, index_two);
+        candidates.push_back(candidate);
+    }    
+
+    // close file
+    fclose(fp);
+
+    if (print_verbose) printf("No. Candidates: %lu\n", ncandidates);
+
+    // return success
+    return 1;
+}
+
+
+
+static void
+ReadDecisionFile(void)
+{
+    char input_filename[4096];
+    sprintf(input_filename, "gold/%s-%s-%lu.gold", prefixes[GRID_ONE], prefixes[GRID_TWO], threshold);
+
+    // open file
+    FILE *fp = fopen(input_filename, "rb");
+    if (!fp) return;
+
+    int ndecisions;
+    if (fread(&ndecisions, sizeof(int), 1, fp) != 1) return;
+
+    for (int iv = 0; iv < ndecisions; ++iv) {
+        int decision;
+        if (fread(&decision, sizeof(int), 1, fp) != 1) return;
+        decisions.push_back(DECISION(decision));
+        ++candidate_index;
+    }
+
+    // close file
+    fclose(fp);
+}
 
 
 
@@ -296,7 +401,7 @@ static void LabelToIndexMapping(int grid_index)
     int iv = 0;
     for (int iz = 0; iz < grid_size[RN_Z]; ++iz) {
         for (int iy = 0; iy < grid_size[RN_Y]; ++iy) {
-            for (int ix = 0; ix < grid_size[RN_X]; ++ix) {
+            for (int ix = 0; ix < grid_size[RN_X]; ++ix, ++iv) {
                 unsigned long label = (unsigned long)(grid->GridValue(ix, iy, iz) + 0.5);
                 if (!label) continue;
 
@@ -321,24 +426,10 @@ static void LabelToIndexMapping(int grid_index)
 
     // print statistics
     if (print_verbose) {
-        printf("Created random access variables for %s in %0.2f seconds\n", meta_data[grid_index].prefix, start_time.Elapsed());
+        printf("  Created random access variables in %0.2f seconds\n", start_time.Elapsed());
     }
 }
 
-
-
-static R3Point WorldToGrid(R3Point world_position, int index)
-{
-    // get the world box for this grid
-    R3Box world_box = meta_data[index].world_box;
-
-    // get the distance from the x, y, and z minima
-    unsigned long xdiff = (unsigned long)(world_position.X() - world_box.XMin() + 0.5);
-    unsigned long ydiff = (unsigned long)(world_position.Y() - world_box.YMin() + 0.5);
-    unsigned long zdiff = (unsigned long)(world_position.Z() - world_box.ZMin() + 0.5);
-
-    return R3Point(xdiff, ydiff, zdiff);
-}
 
 
 
@@ -352,59 +443,54 @@ static R3Point GridToWorld(R3Point grid_position, int index)
 
 
 
-static void FindOverlapCandidates(void)
+static void GenerateCombinedImage(void)
 {
-    // start statistics
-    RNTime start_time;
-    start_time.Read();
+    R3Box world_box = meta_data[GRID_ONE].world_box;
+    for (int ig = 0; ig < NGRIDS; ++ig) 
+        world_box.Union(meta_data[ig].world_box);
 
-    // find all candidates that overlap between the two volumes
-    R3Box intersection = meta_data[0].world_box;
-    for (int iv = 0; iv < ngrids; ++iv) {
-        intersection.Intersect(meta_data[iv].world_box);
-    }
 
-    unsigned long xmin = (unsigned long)(intersection.XMin() + 0.5);
-    unsigned long ymin = (unsigned long)(intersection.YMin() + 0.5);
-    unsigned long zmin = (unsigned long)(intersection.ZMin() + 0.5);
-    unsigned long xmax = (unsigned long)(intersection.XMax() + 0.5);
-    unsigned long ymax = (unsigned long)(intersection.YMax() + 0.5);
-    unsigned long zmax = (unsigned long)(intersection.ZMax() + 0.5);
+    // create a combined image grid
+    int xwidth = (int)(world_box.XLength() + 0.5);
+    int ywidth = (int)(world_box.YLength() + 0.5);
+    int zwidth = (int)(world_box.ZLength() + 0.5);
 
-    // create a unique set of overlap candidates
-    std::set<struct MergeCandidate> set = std::set<struct MergeCandidate>();
-    candidates = std::vector<struct MergeCandidate>();
-    for (unsigned long iz = zmin; iz <= zmax; ++iz) {
-        for (unsigned long iy = ymin; iy <= ymax; ++iy) {
-            for (unsigned long ix = xmin; ix <= xmax; ++ix) {
-                // get the grid value for both candidates
-                R3Point position_one = WorldToGrid(R3Point(ix, iy, iz), 0);
-                R3Point position_two = WorldToGrid(R3Point(ix, iy, iz), 0);
+    image_grid = new R3Grid(xwidth, ywidth, zwidth);
+    image_grid->SetWorldToGridTransformation(world_box);
 
-                // get labels for both grids
-                unsigned long label_one = (unsigned long)(rhoana_grids[0]->GridValue(position_one) + 0.5);
-                unsigned long label_two = (unsigned long)(rhoana_grids[1]->GridValue(position_two) + 0.5);
-                if (!label_one) continue;
-                if (!label_two) continue;
+    int xmin = (int)(world_box.XMin() + 0.5);
+    int ymin = (int)(world_box.YMin() + 0.5);
+    int zmin = (int)(world_box.ZMin() + 0.5);
+    int xmax = (int)(world_box.XMax() + 0.5);
+    int ymax = (int)(world_box.YMax() + 0.5);
+    int zmax = (int)(world_box.ZMax() + 0.5);
 
-                // get the array indices
-                unsigned long index_one = label_to_index[0][label_one];
-                unsigned long index_two = label_to_index[1][label_two];
+    for (int iz = zmin; iz < zmax; ++iz) {
+        for (int iy = ymin; iy < ymax; ++iy) {
+            for (int ix = xmin; ix < xmax; ++ix) {
+                // get the position from this world coordinate
+                R3Point position_one = image_grids[GRID_ONE]->GridPosition(ix, iy, iz);
 
-                struct MergeCandidate candidate = MergeCandidate(label_one, label_two, index_one, index_two);
+                // if the position is not in image one, go to image two
+                if (R3Intersects(image_grids[GRID_ONE]->GridBox(), position_one)) {
+                    // get the image value
+                    RNScalar image_value = image_grids[GRID_ONE]->GridValue(position_one);
 
-                if (set.find(candidate) == set.end()) {
-                    set.insert(candidate);
-                    candidates.push_back(candidate);
+                    // set the grid value
+                    image_grid->SetGridValue(ix - xmin, iy - ymin, iz - zmin, image_value);
+                }
+                else {
+                    // get the position from this world coordinate
+                    R3Point position_two = image_grids[GRID_TWO]->GridPosition(ix, iy, iz);
+
+                    // get the image value
+                    RNScalar image_value = image_grids[GRID_TWO]->GridValue(position_two);
+
+                    // set the grid value
+                    image_grid->SetGridValue(ix - xmin, iy - ymin, iz - zmin, image_value);
                 }
             }
         }
-    }
-
-    // print statistics
-    if (print_verbose) {
-        printf("Calculated all examples in %0.2f seconds:\n", start_time.Elapsed());
-        printf(  "Pairs found: %lu\n", candidates.size());
     }
 }
 
@@ -435,10 +521,20 @@ static void DrawIndividualSegment(unsigned long index, int grid_index)
 
         // convert to world coordinates
         R3Point world_position = GridToWorld(R3Point(ix, iy, iz), grid_index);
-        printf("%d: %lf %lf %lf\n", iv, world_position.X(), world_position.Y(), world_position.Z());
         glVertex3f(world_position.X(), world_position.Y(), world_position.Z());
     }
     glEnd();
+}
+
+
+
+static void DrawSlice()
+{
+    // reset color pallete to white
+    RNLoadRgb(1.0, 1.0, 1.0);
+
+    // draw the selected slice
+    image_grid->DrawSlice(projection_dim, selected_slice_index[projection_dim]);
 }
 
 
@@ -449,6 +545,28 @@ static void DrawIndividualSegment(unsigned long index, int grid_index)
 
 void GLUTStop(void)
 {
+    // save all of the decisions
+    char output_filename[4096];
+    sprintf(output_filename, "gold/%s-%s-%lu.gold", prefixes[GRID_ONE], prefixes[GRID_TWO], threshold);
+
+    // open file
+    FILE *fp = fopen(output_filename, "wb");
+    if (!fp) { fprintf(stderr, "Failed to write to %s\n", output_filename); }
+    else {
+        // write the number of decisions
+        int ndecisions = decisions.size();
+        fwrite(&ndecisions, sizeof(int), 1, fp);
+
+        for (int iv = 0; iv < ndecisions; ++iv) {
+            int decision = decisions[iv];
+            fwrite(&decision, sizeof(int), 1, fp);
+        }
+
+        // close file
+        fclose(fp);   
+    }
+
+
     // destroy window
     glutDestroyWindow(GLUTwindow);
 
@@ -456,11 +574,10 @@ void GLUTStop(void)
     RNTime start_time;
     start_time.Read();
 
-    for (int iv = 0; iv < ngrids; ++iv) {
-        delete boundary_grids[iv];
+    for (int iv = 0; iv < NGRIDS; ++iv) {
         delete image_grids[iv];
-        delete rhoana_grids[iv];
     }
+    delete image_grid;
 
     // print statistics
     if(print_verbose) {
@@ -503,6 +620,9 @@ void GLUTRedraw(void)
     unsigned long index_two = candidates[candidate_index].index_two;
     RNLoadRgb(RNblue_rgb);
     DrawIndividualSegment(index_two, 1);
+    
+    // draw the slice if needed
+    if (show_slice) DrawSlice();
 
     // pop the transformation
     transformation.Pop();
@@ -513,10 +633,15 @@ void GLUTRedraw(void)
         world_box.Outline();
 
         // draw all bounding boxes
-        for (int iv = 0; iv < ngrids; ++iv) {
+        for (int iv = 0; iv < NGRIDS; ++iv) {
             meta_data[iv].scaled_box.Outline();
         }
     }
+
+    // write the candidate index
+    char candidate_label[4096];
+    sprintf(candidate_label, "Ebro Gold - %d\n", candidate_index);
+    glutSetWindowTitle(candidate_label);
 
     // epilogue
     glEnable(GL_LIGHTING);
@@ -613,14 +738,27 @@ void GLUTSpecial(int key, int x, int y)
 
     switch(key) {
         case GLUT_KEY_LEFT: {
-            --candidate_index;
-            if (candidate_index < 0) candidate_index = 0;
+            downsample_rate -= 1.0;
+            if (downsample_rate < 1) downsample_rate = 1.0;
             break;
         }
 
         case GLUT_KEY_RIGHT: {
-            ++candidate_index;
-            if (candidate_index >= candidates.size()) candidate_index = candidates.size();
+            downsample_rate += 1.0;
+            break;
+        }
+
+        case GLUT_KEY_UP: {
+            ++(selected_slice_index[projection_dim]);
+            if (selected_slice_index[projection_dim] >= image_grid->Resolution(projection_dim)) 
+                selected_slice_index[projection_dim] = image_grid->Resolution(projection_dim) - 1;
+            break;
+        }
+
+        case GLUT_KEY_DOWN: {
+            --(selected_slice_index[projection_dim]);
+            if (selected_slice_index[projection_dim] < 0)
+                selected_slice_index[projection_dim] = 0;
             break;
         }
     }
@@ -645,9 +783,63 @@ void GLUTKeyboard(unsigned char key, int x, int y)
 
     // keys regardless of projection status
     switch(key) {
+        /* decision keys */
+        case 'A':
+        case 'a': {
+            decisions.push_back(YES);
+            ++candidate_index;
+            break;
+        }
+
+        case 'D':
+        case 'd': {
+            decisions.push_back(NO);
+            ++candidate_index;
+            break;
+        }
+
+        case SPACEBAR: {
+            decisions.push_back(UNDECIDED);
+            ++candidate_index;
+            break;
+        }
+
+
         case 'B':
         case 'b': {
             show_bbox = 1 - show_bbox;
+            break;
+        }
+
+        case 'W':
+        case 'w': {
+            show_slice = 1 - show_slice;
+            break;
+        }
+
+        case 'X':
+        case 'x': {
+            projection_dim = RN_X;
+            break;
+        }
+
+        case 'Y':
+        case 'y': {
+            projection_dim = RN_Y;
+            break;
+        }
+
+        case 'Z':
+        case 'z': {
+            projection_dim = RN_Z;
+            break;
+        }
+
+        case CTRLZ: {
+            if (decisions.size()) {
+                decisions.pop_back();
+                --candidate_index;
+            }
             break;
         }
 
@@ -764,17 +956,18 @@ ParseArgs(int argc, char** argv)
     while (argc > 0) {
         if ((*argv)[0] == '-') {
             if (!strcmp(*argv, "-v")) print_verbose = 1;
+            else if (!strcmp(*argv, "-threshold")) { argv++; argc--; threshold = atoi(*argv); }
             else { fprintf(stderr, "Invalid program argument: %s\n", *argv); return 0; }
         } else {
-            if (!prefixes[0]) { prefixes[0] = *argv; } 
-            else if (!prefixes[1]) { prefixes[1] = *argv; }
+            if (!prefixes[GRID_ONE]) { prefixes[GRID_ONE] = *argv; } 
+            else if (!prefixes[GRID_TWO]) { prefixes[GRID_TWO] = *argv; }
             else { fprintf(stderr, "Invalid program argument: %s\n", *argv); return 0; }
         }
         argv++; argc--;
     }
 
     // error if there is no input name
-    for (int iv = 0; iv < ngrids; ++iv) {
+    for (int iv = 0; iv < NGRIDS; ++iv) {
         if (!prefixes[iv]) { fprintf(stderr, "Need to supply a prefix\n"); return 0; }
     }
 
@@ -798,22 +991,31 @@ main(int argc, char** argv)
     //// Read in the voxel files ////
     /////////////////////////////////
 
-    for (int iv = 0; iv < ngrids; ++iv) {
+    for (int iv = 0; iv < NGRIDS; ++iv) {
         if (!ReadMetaData(prefixes[iv], iv)) exit(-1);
         if (!ReadVoxelGrids(iv)) exit(-1);
         LabelToIndexMapping(iv);
+
+        // delete rhoana grids to save space
+        delete rhoana_grids[iv];
     }
 
     // find the potential merge candidates
-    FindOverlapCandidates();
+    if (!ReadOverlapCandidates()) exit(-1);
 
     // set world box
-    world_box = meta_data[0].scaled_box;
-    for (int iv = 1; iv < ngrids; ++iv) 
+    world_box = meta_data[GRID_ONE].scaled_box;
+    for (int iv = 1; iv < NGRIDS; ++iv) 
         world_box.Union(meta_data[iv].scaled_box);
     
     // get the transformation
     transformation = R3Affine(R4Matrix(resolution[RN_X], 0, 0, 0, 0, resolution[RN_Y], 0, 0, 0, 0, resolution[RN_Z], 0, 0, 0, 0, 1));
+
+    // merge the two images
+    GenerateCombinedImage();
+
+    // read the existing decision file
+    ReadDecisionFile();
 
     // create viewer
     viewer = CreateViewer();
@@ -828,525 +1030,3 @@ main(int argc, char** argv)
     // return success
     return 1;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-/*// program arguments
-
-static int print_debug = 0;
-static int print_verbose = 0;
-static const char* prefix = NULL;
-static int window_width[3] = { -1, -1, -1 };
-
-
-
-// feature variables
-
-static std::vector<RNBoolean> ground_truth;
-static R3Grid *grid = NULL;
-static int feature_index = 0;
-
-
-
-// transformation variables
-
-static R3Viewer* viewer = NULL;
-static R3Point selected_position;
-static R3Box world_box;
-
-
-
-// GLUT variables
-
-static int GLUTwindow = 0;
-static int GLUTwindow_height = 1200;
-static int GLUTwindow_width = 1200;
-static int GLUTmouse[2] = { 0, 0 };
-static int GLUTbutton[3] = { 0, 0, 0 };
-static int GLUTmodifiers = 0;
-
-
-
-// style variables
-
-static RNScalar background_color[3] = { 0, 0, 0 };
-
-
-
-////////////////////////////////////////////////////////////////////////
-// Input/output functions
-////////////////////////////////////////////////////////////////////////
-
-static int ReadGroundTruth(void)
-{
-    // get the ground truth file
-    char ground_truth_filename[4096];
-    sprintf(ground_truth_filename, "%s-ground-truth.txt", prefix);
-
-    // open the file
-    FILE *fp = fopen(ground_truth_filename, "r");
-    if (!fp) { fprintf(stderr, "Failed to read %s\n", ground_truth_filename); return 0; }
-
-    // create an empty vector for ground truth
-    ground_truth = std::vector<RNBoolean>();
-    
-    // read in the file line by line
-    char *line = NULL;
-    size_t len = 0;
-    while (getline(&line, &len, fp) != -1) {
-        // add to the array of ground truth values
-        ground_truth.push_back(atoi(line));
-    }
-
-    // close file
-    fclose(fp);
-
-    // return success
-    return 1;
-}
-
-
-
-static int ReadFeature(int index)
-{
-    // free old grid memory
-    if (grid) delete grid;
-
-    // get the filename for this feature
-    char feature_filename[4096];
-    sprintf(feature_filename, "%s/%05d-feature.h5", prefix, index);
-
-    // read the feature into an R3Grid
-    R3Grid **grids = RNReadH5File(feature_filename, "main");
-    
-    if (window_width[RN_X] > 0 && window_width[RN_Y] > 0 && window_width[RN_Z] > 0) {
-        grid = new R3Grid(window_width[RN_X], window_width[RN_Y], window_width[RN_Z]);
-
-        // iterate over all elements in the new grid
-        for (int iz = 0; iz < window_width[RN_Z]; ++iz) {
-            for (int iy = 0; iy < window_width[RN_Y]; ++iy) {
-                for (int ix = 0; ix < window_width[RN_X]; ++ix) {
-                    int iw = (int)(grids[0]->ZResolution() / (float)window_width[RN_Z] * iz);
-                    int iv = (int)(grids[0]->YResolution() / (float)window_width[RN_Y] * iy);
-                    int iu = (int)(grids[0]->XResolution() / (float)window_width[RN_X] * ix);
-
-                    grid->SetGridValue(ix, iy, iz, grids[0]->GridValue(iu, iv, iw));
-                }
-            }
-        }
-
-        delete grids[0];
-    }
-    else {
-        grid = grids[0];
-    }
-
-    delete[] grids;
-
-    // return success
-    return 1;
-}
-
-
-
-////////////////////////////////////////////////////////////////////////
-// GLUT interface functions
-////////////////////////////////////////////////////////////////////////
-
-void GLUTStop(void)
-{
-    // destroy window
-    glutDestroyWindow(GLUTwindow);
-
-    // delete the neuron data
-    RNTime start_time;
-    start_time.Read();
-
-    if (grid) delete grid;
-
-    // print statistics
-    if(print_verbose) {
-        printf("Deleted data...\n");
-        printf("  Time = %.2f seconds\n", start_time.Elapsed());
-        fflush(stdout);
-    }
-
-    // exit
-    exit(0);
-}
-
-
-
-void GLUTRedraw(void)
-{
-    // clear window
-    glClearColor(background_color[0], background_color[1], background_color[2], 1.0);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-    // set viewing transformation
-    viewer->Camera().Load();
-
-    // set lights
-    static GLfloat light0_position[] = { 3.0, 4.0, 5.0, 0.0 };
-    glLightfv(GL_LIGHT0, GL_POSITION, light0_position);
-    static GLfloat light1_position[] = { -3.0, -2.0, -3.0, 0.0 };
-    glLightfv(GL_LIGHT1, GL_POSITION, light1_position);
-
-    // prologue
-    glDisable(GL_LIGHTING);
-
-    // draw feature bounding box
-    RNLoadRgb(RNwhite_rgb);
-    world_box.Outline();
-
-    // draw the actual points in 3D
-    glBegin(GL_POINTS);
-    for (int iz = 0; iz < grid->ZResolution(); ++iz) {
-        for (int iy = 0; iy < grid->YResolution(); ++iy) {
-            for (int ix = 0; ix < grid->XResolution(); ++ix) {
-                int grid_value = (int)(grid->GridValue(ix, iy, iz) + 0.5);
-                if (grid_value == 1) {
-                    if (ground_truth[feature_index]) RNLoadRgb(RNgreen_rgb);
-                    else RNLoadRgb(RNred_rgb);
-                    glVertex3f(ix, iy, iz);
-                }
-                else if (grid_value == 2) {
-                    if (ground_truth[feature_index]) RNLoadRgb(RNblue_rgb);
-                    else RNLoadRgb(RNyellow_rgb);
-                    glVertex3f(ix, iy, iz);
-                }
-            }
-        }
-    }
-    glEnd();
-
-    // write the feature
-    char feature_label[4096];
-    sprintf(feature_label, "Feature Visualizer - %d - Predicted: \n", feature_index);
-    glutSetWindowTitle(feature_label);
-
-    // epilogue
-    glEnable(GL_LIGHTING);
-
-    // swap buffers
-    glutSwapBuffers();
-}
-
-
-
-void GLUTResize(int w, int h)
-{
-    // resize window
-    glViewport(0, 0, w, h);
-
-    // resize viewer viewport
-    viewer->ResizeViewport(0, 0, w, h);
-
-    // remember window size
-    GLUTwindow_width = w;
-    GLUTwindow_height = h;
-
-    // redraw
-    glutPostRedisplay();
-}
-
-
-
-void GLUTMotion(int x, int y)
-{
-    // invert y coordinate
-    y = GLUTwindow_height - y;
-
-    // remember mouse position
-    int dx = x - GLUTmouse[0];
-    int dy = y - GLUTmouse[1];
-
-    // world in hand navigation
-    R3Point origin = world_box.Centroid();
-    if(GLUTbutton[0])
-        viewer->RotateWorld(1.0, origin, x, y, dx, dy);
-    else if(GLUTbutton[1])
-        viewer->ScaleWorld(1.0, origin, x, y, dx, dy);
-    else if(GLUTbutton[2]) {
-        viewer->TranslateWorld(1.0, origin, x, y, dx, dy);
-    }
-
-    // redisplay if a mouse was down
-    if(GLUTbutton[0] || GLUTbutton[1] || GLUTbutton[2]) glutPostRedisplay();
-
-    // remember mouse position
-    GLUTmouse[0] = x;
-    GLUTmouse[1] = y;
-}
-
-
-
-void GLUTMouse(int button, int state, int x, int y)
-{
-    // invert y coordinate
-    y = GLUTwindow_height - y;
-
-    // remember mouse position
-    GLUTmouse[0] = x;
-    GLUTmouse[1] = y;
-
-    // remember button state
-    int b = (button == GLUT_LEFT_BUTTON) ? 0 : ((button == GLUT_MIDDLE_BUTTON) ? 1 : 2);
-    GLUTbutton[b] = (state == GLUT_DOWN) ? 1 : 0;
-
-    // remember modifiers
-    GLUTmodifiers = glutGetModifiers();
-
-    // remember mouse position
-    GLUTmouse[0] = x;
-    GLUTmouse[1] = y;
-
-    // redraw
-    glutPostRedisplay();
-}
-
-
-
-void GLUTSpecial(int key, int x, int y)
-{
-    // invert y coordinate
-    y = GLUTwindow_height - y;
-
-    // remember mouse position
-    GLUTmouse[0] = x;
-    GLUTmouse[1] = y;
-
-    // remember modifiers
-    GLUTmodifiers = glutGetModifiers();
-
-    switch(key) {
-        case GLUT_KEY_LEFT: {
-            feature_index--;
-            if(feature_index < 0) feature_index = 0;
-            ReadFeature(feature_index);
-            break;
-        }
-
-        case GLUT_KEY_RIGHT: {
-            feature_index++;
-            if(feature_index > (int)ground_truth.size() - 1)
-                feature_index = ground_truth.size() - 1;
-            ReadFeature(feature_index);
-            break;
-        }
-    }
-
-    // redraw
-    glutPostRedisplay();
-}
-
-
-
-void GLUTKeyboard(unsigned char key, int x, int y)
-{
-    // invert y coordinate
-    y = GLUTwindow_height - y;
-
-    // remember mouse position
-    GLUTmouse[0] = x;
-    GLUTmouse[1] = y;
-
-    // remember modifiers
-    GLUTmodifiers = glutGetModifiers();
-
-    // keys regardless of projection status
-    switch(key) {
-        case ESCAPE: {
-            GLUTStop();
-            break;
-        }
-    }
-
-    // redraw
-    glutPostRedisplay();
-}
-
-
-
-void GLUTInit(int* argc, char** argv)
-{
-    // open window
-    glutInit(argc, argv);
-    glutInitWindowPosition(10, 10);
-    glutInitWindowSize(GLUTwindow_width, GLUTwindow_height);
-    glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
-    GLUTwindow = glutCreateWindow("Feature Visualizer");
-
-    // initialize background color
-    glClearColor(background_color[0], background_color[1], background_color[2], 1.0);
-
-    // initialize lights
-    static GLfloat lmodel_ambient[] = { 0.2, 0.2, 0.2, 1.0 };
-    glLightModelfv(GL_LIGHT_MODEL_AMBIENT, lmodel_ambient);
-    glLightModeli(GL_LIGHT_MODEL_LOCAL_VIEWER, GL_TRUE);
-    static GLfloat light0_diffuse[] = { 1.0, 1.0, 1.0, 1.0 };
-    glLightfv(GL_LIGHT0, GL_DIFFUSE, light0_diffuse);
-    glEnable(GL_LIGHT0);
-    static GLfloat light1_diffuse[] = { 0.5, 0.5, 0.5, 1.0 };
-    glLightfv(GL_LIGHT1, GL_DIFFUSE, light1_diffuse);
-    glEnable(GL_LIGHT1);
-    glEnable(GL_NORMALIZE);
-    glEnable(GL_LIGHTING);
-
-    // initialize graphics mode
-    glEnable(GL_DEPTH_TEST);
-
-    // initialize GLUT callback functions
-    glutDisplayFunc(GLUTRedraw);
-    glutReshapeFunc(GLUTResize);
-    glutKeyboardFunc(GLUTKeyboard);
-    glutSpecialFunc(GLUTSpecial);
-    glutMouseFunc(GLUTMouse);
-    glutMotionFunc(GLUTMotion);
-}
-
-
-
-void GLUTMainLoop(void)
-{
-    // run main loop -- never returns
-    glutMainLoop();
-}
-
-
-
-////////////////////////////////////////////////////////////////////////
-// Viewer functions
-////////////////////////////////////////////////////////////////////////
-
-static R3Viewer* CreateViewer(void)
-{
-    // start statistics
-    RNTime start_time;
-    start_time.Read();
-
-    if(world_box.IsEmpty()) RNAbort("Error in CreateViewer - box is empty");
-    RNLength r = world_box.DiagonalRadius();
-    if(r < 0 || RNIsInfinite(r)) RNAbort("Error in CreateViewer - r must be positive finite");
-
-    // set up camera view looking down the z axis
-    static R3Vector initial_camera_towards = R3Vector(0.0, 0.0, -1.5);
-    static R3Vector initial_camera_up = R3Vector(0.0, 1.0, 0.0);
-    R3Point initial_camera_origin = world_box.Centroid() - initial_camera_towards * 2.5 * r;
-    R3Camera camera(initial_camera_origin, initial_camera_towards, initial_camera_up, 0.4, 0.4, 0.1 * r, 1000.0 * r);
-    R2Viewport viewport(0, 0, GLUTwindow_width, GLUTwindow_height);
-    R3Viewer* viewer = new R3Viewer(camera, viewport);
-
-    // print statistics
-    if(print_verbose) {
-        printf("Created viewer ...\n");
-        printf("  Time = %.2f seconds\n", start_time.Elapsed());
-        printf("  Origin = %g %g %g\n", camera.Origin().X(), camera.Origin().Y(), camera.Origin().Z());
-        printf("  Towards = %g %g %g\n", camera.Towards().X(), camera.Towards().Y(), camera.Towards().Z());
-        printf("  Up = %g %g %g\n", camera.Up().X(), camera.Up().Y(), camera.Up().Z());
-        printf("  Fov = %g %g\n", camera.XFOV(), camera.YFOV());
-        printf("  Near = %g\n", camera.Near());
-        printf("  Far = %g\n", camera.Far());
-        fflush(stdout);
-    }
-
-    // return viewer
-    return viewer;
-}
-
-
-
-////////////////////////////////////////////////////////////////////////
-// Program argument parsing
-////////////////////////////////////////////////////////////////////////
-
-static int ParseArgs(int argc, char** argv)
-{
-    // parse arguments
-    argc--; argv++;
-    while (argc > 0) {
-        if ((*argv)[0] == '-') {
-            if (!strcmp(*argv, "-v")) print_verbose = 1;
-            else if (!strcmp(*argv, "-debug")) print_debug = 1;
-            else if (!strcmp(*argv, "-window_width")) {
-                argv++; argc--; window_width[RN_X] = atoi(*argv);
-                argv++; argc--; window_width[RN_Y] = atoi(*argv);
-                argv++; argc--; window_width[RN_Z] = atoi(*argv);
-            }
-            else { fprintf(stderr, "Invalid program argument: %s\n", *argv); return 0; }
-        } else {
-            if (!prefix) { prefix = *argv; } 
-            else { fprintf(stderr, "Invalid program argument: %s\n", *argv); return 0; }
-        }
-        argv++; argc--;
-    }
-
-    // error if there is no input name
-    if(!prefix) { fprintf(stderr, "Need to supply a prefix file\n"); return 0; }
-
-    // return success
-    return 1;
-}
-
-
-
-////////////////////////////////////////////////////////////////////////
-// Main program
-////////////////////////////////////////////////////////////////////////
-
-int main(int argc, char** argv)
-{
-    // parse program arguments
-    if (!ParseArgs(argc, argv)) exit(-1);
-
-    //////////////////////////////////////////////////
-    //// Read in the voxel and ground truth files ////
-    //////////////////////////////////////////////////
-
-    // read in the ground truth file
-    if (!ReadGroundTruth()) exit(-1);
-
-    // read the first feature
-    if (!ReadFeature(feature_index)) exit(-1);
-
-    if (print_verbose) {
-        printf("Resolution = (%d %d %d)\n", grid->XResolution(), grid->YResolution(), grid->ZResolution());
-    }
-
-    // set world box
-    world_box = R3Box(0, 0, 0, grid->XResolution(), grid->YResolution(), grid->ZResolution());
-    
-    // create viewer
-    viewer = CreateViewer();
-    if (!viewer) exit(-1);
-
-    // initialize GLUT
-    GLUTInit(&argc, argv);
-
-    // run GLUT interface
-    GLUTMainLoop();
-
-    // return success
-    return 1;
-}*/

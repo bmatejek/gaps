@@ -4137,6 +4137,11 @@ DrawSlice(RNDimension dim, int coord) const
   p2[dim] = coord; p2[dim1] = Resolution(dim1)-1; p2[dim2] = Resolution(dim2)-1;
   p3[dim] = coord; p3[dim1] = 0;                  p3[dim2] = Resolution(dim2)-1;
 
+  p0 = WorldPosition(p0);
+  p1 = WorldPosition(p1);
+  p2 = WorldPosition(p2);
+  p3 = WorldPosition(p3);
+
   // Draw quad 
   RNScalar one = 1.0;
   RNScalar zero = 0;
