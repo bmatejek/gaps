@@ -47,26 +47,19 @@ struct RNMeta {
 
 
 struct MergeCandidate {
-    MergeCandidate(unsigned long label_one, unsigned long label_two, unsigned long index_one, unsigned long index_two) :
+    MergeCandidate(unsigned long label_one, unsigned long label_two, unsigned long index_one, unsigned long index_two, R3Point center) :
     label_one(label_one),
     label_two(label_two),
     index_one(index_one),
-    index_two(index_two)
+    index_two(index_two),
+    center(center)
     {}
-
-    bool operator<(const MergeCandidate &other) const
-    {
-        if (this->label_one < other.label_one) return true;
-        else if (this->label_one > other.label_one) return false;
-        else if (this->label_two < other.label_two) return true;
-        else if (this->label_two > other.label_two) return false;
-        else return false;
-    }
 
     unsigned long label_one;
     unsigned long label_two;
     unsigned long index_one;
     unsigned long index_two;
+    R3Point center;
 };
 
 
@@ -77,6 +70,8 @@ struct MergeCandidate {
 static int print_verbose = 0;
 static const char *prefixes[NGRIDS] = { NULL, NULL };
 static unsigned long threshold = 10000;
+// window radius in nanometers
+static RNScalar window_radius = 800;
 
 
 
@@ -295,14 +290,20 @@ static int ReadOverlapCandidates(void)
     for (unsigned long iv = 0; iv < ncandidates; ++iv) {
         unsigned long label_one;
         unsigned long label_two;
+        unsigned long xcenter;
+        unsigned long ycenter;
+        unsigned long zcenter;
 
         if (fread(&label_one, sizeof(unsigned long), 1, fp) != 1) return 0;
         if (fread(&label_two, sizeof(unsigned long), 1, fp) != 1) return 0;
+        if (fread(&xcenter, sizeof(unsigned long), 1, fp) != 1) return 0;
+        if (fread(&ycenter, sizeof(unsigned long), 1, fp) != 1) return 0;
+        if (fread(&zcenter, sizeof(unsigned long), 1, fp) != 1) return 0;
 
         unsigned long index_one = label_to_index[GRID_ONE][label_one];
         unsigned long index_two = label_to_index[GRID_TWO][label_two];
 
-        struct MergeCandidate candidate = MergeCandidate(label_one, label_two, index_one, index_two);
+        struct MergeCandidate candidate = MergeCandidate(label_one, label_two, index_one, index_two, R3Point(xcenter, ycenter, zcenter));
         candidates.push_back(candidate);
     }    
 
@@ -621,6 +622,12 @@ void GLUTRedraw(void)
     RNLoadRgb(RNblue_rgb);
     DrawIndividualSegment(index_two, 1);
     
+    // draw the bounding box for this location
+    RNLoadRgb(RNwhite_rgb);
+    RNScalar radius[3] = { window_radius / resolution[RN_X], window_radius / resolution[RN_Y], window_radius / resolution[RN_Z] };
+    R3Point center = candidates[candidate_index].center;
+    R3Box(center.X() - radius[RN_X], center.Y() - radius[RN_Y], center.Z() - radius[RN_Z], center.X() + radius[RN_X], center.Y() + radius[RN_Y], center.Z() + radius[RN_Z]).Outline();
+
     // draw the slice if needed
     if (show_slice) DrawSlice();
 
@@ -957,6 +964,7 @@ ParseArgs(int argc, char** argv)
         if ((*argv)[0] == '-') {
             if (!strcmp(*argv, "-v")) print_verbose = 1;
             else if (!strcmp(*argv, "-threshold")) { argv++; argc--; threshold = atoi(*argv); }
+            else if (!strcmp(*argv, "-window_radius")) { argv++; argc--; window_radius = atoi(*argv); }
             else { fprintf(stderr, "Invalid program argument: %s\n", *argv); return 0; }
         } else {
             if (!prefixes[GRID_ONE]) { prefixes[GRID_ONE] = *argv; } 
