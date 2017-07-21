@@ -71,7 +71,7 @@ static int print_verbose = 0;
 static const char *prefixes[NGRIDS] = { NULL, NULL };
 static unsigned long threshold = 10000;
 // window radius in nanometers
-static RNScalar window_radius = 800;
+static RNScalar window_radius = 600;
 
 
 
@@ -273,7 +273,7 @@ static int ReadOverlapCandidates(void)
 {
     // get filename
     char overlap_filename[4096];
-    sprintf(overlap_filename, "features/ebro/%s-%s-%lu.candidates", prefixes[GRID_ONE], prefixes[GRID_TWO], threshold);
+    sprintf(overlap_filename, "features/ebro/%s-%s-%lu-%dnm.candidates", prefixes[GRID_ONE], prefixes[GRID_TWO], threshold, (int)(window_radius + 0.5));
 
     // open file
     FILE *fp = fopen(overlap_filename, "rb"); 
@@ -322,7 +322,7 @@ static void
 ReadDecisionFile(void)
 {
     char input_filename[4096];
-    sprintf(input_filename, "gold/%s-%s-%lu.gold", prefixes[GRID_ONE], prefixes[GRID_TWO], threshold);
+    sprintf(input_filename, "gold/%s-%s-%lu-%dnm.gold", prefixes[GRID_ONE], prefixes[GRID_TWO], threshold, (int)(window_radius + 0.5));
 
     // open file
     FILE *fp = fopen(input_filename, "rb");
