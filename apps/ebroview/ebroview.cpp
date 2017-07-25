@@ -211,7 +211,9 @@ void GLUTRedraw(void)
 
     // write the feature
     char feature_label[4096];
-    sprintf(feature_label, "Feature Visualizer - %d - Predicted: \n", candidate_index);
+    if (decisions[candidate_index] == YES) sprintf(feature_label, "Feature Visualizer - %d - YES - Predicted: \n", candidate_index);
+    if (decisions[candidate_index] == NO) sprintf(feature_label, "Feature Visualizer - %d - NO - Predicted: \n", candidate_index);
+    if (decisions[candidate_index] == UNDECIDED) sprintf(feature_label, "Feature Visualizer - %d - UNDECIDED - Predicted: \n", candidate_index);
     glutSetWindowTitle(feature_label);
 
     // epilogue
