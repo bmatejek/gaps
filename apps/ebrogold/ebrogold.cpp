@@ -548,7 +548,7 @@ void GLUTStop(void)
 {
     // save all of the decisions
     char output_filename[4096];
-    sprintf(output_filename, "gold/%s-%s-%lu.gold", prefixes[GRID_ONE], prefixes[GRID_TWO], threshold);
+    sprintf(output_filename, "gold/%s-%s-%lu-%dnm.gold", prefixes[GRID_ONE], prefixes[GRID_TWO], threshold, (int)(window_radius + 0.5));
 
     // open file
     FILE *fp = fopen(output_filename, "wb");
@@ -756,15 +756,15 @@ void GLUTSpecial(int key, int x, int y)
         }
 
         case GLUT_KEY_UP: {
-            ++(selected_slice_index[projection_dim]);
-            if (selected_slice_index[projection_dim] >= image_grid->Resolution(projection_dim)) 
+	    selected_slice_index[projection_dim] += 5;
+	    if (selected_slice_index[projection_dim] >= image_grid->Resolution(projection_dim)) 
                 selected_slice_index[projection_dim] = image_grid->Resolution(projection_dim) - 1;
             break;
         }
 
         case GLUT_KEY_DOWN: {
-            --(selected_slice_index[projection_dim]);
-            if (selected_slice_index[projection_dim] < 0)
+	    selected_slice_index[projection_dim] -= 5;
+	    if (selected_slice_index[projection_dim] < 0)
                 selected_slice_index[projection_dim] = 0;
             break;
         }
