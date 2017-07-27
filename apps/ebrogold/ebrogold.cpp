@@ -135,6 +135,7 @@ static int candidate_index = 0;
 static int show_slice = 1;
 static int selected_slice_index[3] = { 0, 0, 0 };
 static int projection_dim = RN_Z;
+static int show_outline = 0;
 
 
 
@@ -478,6 +479,16 @@ static R3Point GridToWorld(R3Point grid_position, int index)
 
 
 
+static R3Point WorldToGrid(R3Point world_position, R3Box world_bbox)
+{
+    RNScalar xdiff = world_position.X() - world_bbox.XMin();
+    RNScalar ydiff = world_position.Y() - world_bbox.YMin();
+    RNScalar zdiff = world_position.Z() - world_bbox.ZMin();
+
+    return R3Point(xdiff, ydiff, zdiff);
+}
+
+
 static void GenerateCombinedImage(void)
 {
     R3Box world_box = meta_data[GRID_ONE].world_box;
@@ -550,12 +561,21 @@ static void DrawIndividualSegment(unsigned long index, int grid_index)
 {
     glBegin(GL_POINTS);
     for (unsigned int iv = 0; iv < segmentations[grid_index][index].size(); ++iv) {
-        if (RNRandomScalar() > 1.0 / downsample_rate) continue;
         int ix, iy, iz;
         IndexToIndices(segmentations[grid_index][index][iv], ix, iy, iz);
 
         // convert to world coordinates
         R3Point world_position = GridToWorld(R3Point(ix, iy, iz), grid_index);
+        // show outline or entire segment
+        if (show_outline) {
+            if (projection_dim == RN_X && abs(ix - selected_slice_index[RN_X]) > 1) continue;
+            if (projection_dim == RN_Y && abs(iy - selected_slice_index[RN_Y]) > 1) continue;
+            if (projection_dim == RN_Z && abs(iz - selected_slice_index[RN_Z]) > 1) continue;
+            if (RNRandomScalar() > 0.5) continue;
+        }
+        else {
+            if (RNRandomScalar() > 1.0 / downsample_rate) continue;
+        }
         glVertex3f(world_position.X(), world_position.Y(), world_position.Z());
     }
     glEnd();
@@ -790,14 +810,14 @@ void GLUTSpecial(int key, int x, int y)
         }
 
         case GLUT_KEY_UP: {
-	    selected_slice_index[projection_dim] += 5;
+	    selected_slice_index[projection_dim] += 2;
 	    if (selected_slice_index[projection_dim] >= image_grid->Resolution(projection_dim)) 
                 selected_slice_index[projection_dim] = image_grid->Resolution(projection_dim) - 1;
             break;
         }
 
         case GLUT_KEY_DOWN: {
-	    selected_slice_index[projection_dim] -= 5;
+	    selected_slice_index[projection_dim] -= 2;
 	    if (selected_slice_index[projection_dim] < 0)
                 selected_slice_index[projection_dim] = 0;
             break;
@@ -829,6 +849,14 @@ void GLUTKeyboard(unsigned char key, int x, int y)
         case 'a': {
             decisions.push_back(YES);
             ++candidate_index;
+
+            if (candidate_index == (int)candidates.size() - 1) GLUTStop();
+
+            R3Point center = WorldToGrid(candidates[candidate_index].center, image_grid->WorldBox());;
+            selected_slice_index[RN_X] = (int)(center.X() + 0.5);
+            selected_slice_index[RN_Y] = (int)(center.Y() + 0.5);
+            selected_slice_index[RN_Z] = (int)(center.Z() + 0.5);
+
             break;
         }
 
@@ -836,12 +864,28 @@ void GLUTKeyboard(unsigned char key, int x, int y)
         case 'd': {
             decisions.push_back(NO);
             ++candidate_index;
+
+            if (candidate_index == (int)candidates.size() - 1) GLUTStop();
+
+            R3Point center = WorldToGrid(candidates[candidate_index].center, image_grid->WorldBox());;
+            selected_slice_index[RN_X] = (int)(center.X() + 0.5);
+            selected_slice_index[RN_Y] = (int)(center.Y() + 0.5);
+            selected_slice_index[RN_Z] = (int)(center.Z() + 0.5);
+
             break;
         }
 
         case SPACEBAR: {
             decisions.push_back(UNDECIDED);
             ++candidate_index;
+            
+            if (candidate_index == (int)candidates.size() - 1) GLUTStop();
+
+            R3Point center = WorldToGrid(candidates[candidate_index].center, image_grid->WorldBox());;
+            selected_slice_index[RN_X] = (int)(center.X() + 0.5);
+            selected_slice_index[RN_Y] = (int)(center.Y() + 0.5);
+            selected_slice_index[RN_Z] = (int)(center.Z() + 0.5);
+
             break;
         }
 
@@ -849,6 +893,12 @@ void GLUTKeyboard(unsigned char key, int x, int y)
         case 'B':
         case 'b': {
             show_bbox = 1 - show_bbox;
+            break;
+        }
+
+        case 'O':
+        case 'o': {
+            show_outline = 1 - show_outline;
             break;
         }
 
@@ -881,6 +931,12 @@ void GLUTKeyboard(unsigned char key, int x, int y)
                 decisions.pop_back();
                 --candidate_index;
             }
+
+            R3Point center = WorldToGrid(candidates[candidate_index].center, image_grid->WorldBox());;
+            selected_slice_index[RN_X] = (int)(center.X() + 0.5);
+            selected_slice_index[RN_Y] = (int)(center.Y() + 0.5);
+            selected_slice_index[RN_Z] = (int)(center.Z() + 0.5);
+
             break;
         }
 
@@ -1062,6 +1118,11 @@ main(int argc, char** argv)
     // create viewer
     viewer = CreateViewer();
     if (!viewer) exit(-1);    
+
+    R3Point center = WorldToGrid(candidates[candidate_index].center, image_grid->WorldBox());;
+    selected_slice_index[RN_X] = (int)(center.X() + 0.5);
+    selected_slice_index[RN_Y] = (int)(center.Y() + 0.5);
+    selected_slice_index[RN_Z] = (int)(center.Z() + 0.5);
 
     // initialize GLUT
     GLUTInit(&argc, argv);
