@@ -850,7 +850,7 @@ void GLUTKeyboard(unsigned char key, int x, int y)
             decisions.push_back(YES);
             ++candidate_index;
 
-            if (candidate_index == (int)candidates.size() - 1) GLUTStop();
+            if (candidate_index == (int)candidates.size()) GLUTStop();
 
             R3Point center = WorldToGrid(candidates[candidate_index].center, image_grid->WorldBox());;
             selected_slice_index[RN_X] = (int)(center.X() + 0.5);
@@ -865,7 +865,7 @@ void GLUTKeyboard(unsigned char key, int x, int y)
             decisions.push_back(NO);
             ++candidate_index;
 
-            if (candidate_index == (int)candidates.size() - 1) GLUTStop();
+            if (candidate_index == (int)candidates.size()) GLUTStop();
 
             R3Point center = WorldToGrid(candidates[candidate_index].center, image_grid->WorldBox());;
             selected_slice_index[RN_X] = (int)(center.X() + 0.5);
@@ -879,7 +879,7 @@ void GLUTKeyboard(unsigned char key, int x, int y)
             decisions.push_back(UNDECIDED);
             ++candidate_index;
             
-            if (candidate_index == (int)candidates.size() - 1) GLUTStop();
+            if (candidate_index == (int)candidates.size()) GLUTStop();
 
             R3Point center = WorldToGrid(candidates[candidate_index].center, image_grid->WorldBox());;
             selected_slice_index[RN_X] = (int)(center.X() + 0.5);
