@@ -25,7 +25,7 @@ static int print_debug = 0;
 static int print_verbose = 0;
 static const char *prefix_one = NULL;
 static const char *prefix_two = NULL;
-static unsigned long threshold = 20000;
+static unsigned long threshold = 10000;
 // window radius in nanometers
 static RNScalar window_radius = 600;
 static RNScalar resolution[3] = { 4, 4, 30 };
@@ -66,7 +66,7 @@ static RNScalar background_color[3] = { 0, 0, 0 };
 
 // save decisions
 
-enum DECISION { YES, NO, UNDECIDED };
+enum DECISION { NO, YES, UNDECIDED };
 std::vector<enum DECISION> decisions = std::vector<enum DECISION>();
 
 

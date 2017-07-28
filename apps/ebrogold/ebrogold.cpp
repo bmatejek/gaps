@@ -141,7 +141,7 @@ static int show_outline = 0;
 
 // save decisions
 
-enum DECISION { YES, NO, UNDECIDED };
+enum DECISION { NO, YES, UNDECIDED };
 std::vector<enum DECISION> decisions = std::vector<enum DECISION>();
 
 
@@ -669,6 +669,7 @@ void GLUTRedraw(void)
     transformation.Push();
 
     // draw this candidate
+    if (!show_slice) {
     unsigned long index_one = candidates[candidate_index].index_one;
     RNLoadRgb(RNred_rgb);
     DrawIndividualSegment(index_one, 0);
@@ -681,6 +682,7 @@ void GLUTRedraw(void)
     RNScalar radius[3] = { window_radius / resolution[RN_X], window_radius / resolution[RN_Y], window_radius / resolution[RN_Z] };
     R3Point center = candidates[candidate_index].center;
     R3Box(center.X() - radius[RN_X], center.Y() - radius[RN_Y], center.Z() - radius[RN_Z], center.X() + radius[RN_X], center.Y() + radius[RN_Y], center.Z() + radius[RN_Z]).Outline();
+    }
 
     // draw the slice if needed
     if (show_slice) DrawSlice();
