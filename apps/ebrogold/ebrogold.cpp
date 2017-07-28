@@ -125,6 +125,8 @@ static std::vector<RNScalar> overlap_scores;
 // display variables
 
 static int show_bbox = 1;
+static int show_rhoana = 0;
+static int show_segmentation = 1;
 static RNScalar downsample_rate = 3.0;
 static int candidate_index = 0;
 
@@ -227,8 +229,38 @@ ReadMetaData(const char *prefix, int index)
 
 
 
+static int 
+ReadRhoanaGrids(int index)
+{
+    // start statistics
+    RNTime start_time;
+    start_time.Read();
+
+    // read in the rhoana grids
+    R3Grid **grids = RNReadH5File(meta_data[index].rhoana_filename, meta_data[index].rhoana_dataset);
+    if (!grids) { fprintf(stderr, "Failed to read %s\n", meta_data[index].rhoana_filename); return 0; }
+    rhoana_grids[index] = grids[0];
+    delete[] grids;
+
+    for (int dim = 0; dim <= 2; ++dim) rn_assertion(grid_size[dim] == rhoana_grids[index]->Resolution(dim));
+
+    rhoana_grids[index]->SetWorldToGridTransformation(meta_data[index].world_box);
+
+    // print information
+    if (print_verbose) {
+        printf("Read rhoana h5 files in %0.2f seconds for %s:\n", start_time.Elapsed(), meta_data[index].prefix);
+        printf("  Dimensions: (%d, %d, %d)\n", grid_size[RN_X], grid_size[RN_Y], grid_size[RN_Z]);
+        printf("  Resolution: (%d, %d, %d)\n", resolution[RN_X], resolution[RN_Y], resolution[RN_Z]);
+    }
+
+    // return success
+    return 1;
+}
+
+
+
 static int
-ReadVoxelGrids(int index)
+ReadImageGrids(int index)
 {
     // start statistics
     RNTime start_time;
@@ -240,30 +272,23 @@ ReadVoxelGrids(int index)
     image_grids[index] = grids[0];
     delete[] grids;
 
-    grids = RNReadH5File(meta_data[index].rhoana_filename, meta_data[index].rhoana_dataset);
-    if (!grids) { fprintf(stderr, "Failed to read %s\n", meta_data[index].rhoana_filename); return 0; }
-    rhoana_grids[index] = grids[0];
-    delete[] grids;
 
-    // set global grid size
-    if (index == 0) {
-        for (int dim = 0; dim <= 2; ++dim) 
-            grid_size[dim] = rhoana_grids[index]->Resolution(dim);
+    if (!index) {
+        for (int dim = 0; dim <= 2; ++dim) grid_size[dim] = image_grids[index]->Resolution(dim);
     }
     else {
-        for (int dim = 0; dim <= 2; ++dim)
-            rn_assertion(grid_size[dim] == rhoana_grids[index]->Resolution(dim));
+        for (int dim = 0; dim <= 2; ++dim) rn_assertion(grid_size[dim] == image_grids[index]->Resolution(dim));
     }
+
 
     image_grids[index]->SetWorldToGridTransformation(meta_data[index].world_box);
 
     // print information
     if (print_verbose) {
-        printf("Read h5 files in %0.2f seconds for %s:\n", start_time.Elapsed(), meta_data[index].prefix);
+        printf("Read image h5 files in %0.2f seconds for %s:\n", start_time.Elapsed(), meta_data[index].prefix);
         printf("  Dimensions: (%d, %d, %d)\n", grid_size[RN_X], grid_size[RN_Y], grid_size[RN_Z]);
         printf("  Resolution: (%d, %d, %d)\n", resolution[RN_X], resolution[RN_Y], resolution[RN_Z]);
     }
-
 
     // return success 
     return 1;
@@ -589,7 +614,14 @@ static void DrawSlice()
     RNLoadRgb(1.0, 1.0, 1.0);
 
     // draw the selected slice
-    image_grid->DrawSlice(projection_dim, selected_slice_index[projection_dim]);
+    if (show_rhoana) {
+        if (selected_slice_index[projection_dim] + 5 > 0) rhoana_grids[GRID_ONE]->DrawColorSlice(projection_dim, selected_slice_index[projection_dim] + 5);
+        else rhoana_grids[GRID_ONE]->DrawColorSlice(projection_dim, 0);
+
+        if (selected_slice_index[projection_dim] - 5 <= grid_size[projection_dim]) rhoana_grids[GRID_TWO]->DrawColorSlice(projection_dim, selected_slice_index[projection_dim] - 5);
+        else rhoana_grids[GRID_TWO]->DrawColorSlice(projection_dim, grid_size[projection_dim] - 1);
+    }
+    else image_grid->DrawSlice(projection_dim, selected_slice_index[projection_dim]);
 }
 
 
@@ -629,10 +661,9 @@ void GLUTStop(void)
     RNTime start_time;
     start_time.Read();
 
-    for (int iv = 0; iv < NGRIDS; ++iv) {
-        delete image_grids[iv];
-    }
     delete image_grid;
+    for (int iv = 0; iv < NGRIDS; ++iv)
+        delete rhoana_grids[iv];
 
     // print statistics
     if(print_verbose) {
@@ -669,19 +700,19 @@ void GLUTRedraw(void)
     transformation.Push();
 
     // draw this candidate
-    if (!show_slice) {
-    unsigned long index_one = candidates[candidate_index].index_one;
-    RNLoadRgb(RNred_rgb);
-    DrawIndividualSegment(index_one, 0);
-    unsigned long index_two = candidates[candidate_index].index_two;
-    RNLoadRgb(RNblue_rgb);
-    DrawIndividualSegment(index_two, 1);
-    
-    // draw the bounding box for this location
-    RNLoadRgb(RNwhite_rgb);
-    RNScalar radius[3] = { window_radius / resolution[RN_X], window_radius / resolution[RN_Y], window_radius / resolution[RN_Z] };
-    R3Point center = candidates[candidate_index].center;
-    R3Box(center.X() - radius[RN_X], center.Y() - radius[RN_Y], center.Z() - radius[RN_Z], center.X() + radius[RN_X], center.Y() + radius[RN_Y], center.Z() + radius[RN_Z]).Outline();
+    if (show_segmentation) {
+        unsigned long index_one = candidates[candidate_index].index_one;
+        RNLoadRgb(RNred_rgb);
+        DrawIndividualSegment(index_one, 0);
+        unsigned long index_two = candidates[candidate_index].index_two;
+        RNLoadRgb(RNblue_rgb);
+        DrawIndividualSegment(index_two, 1);
+        
+        // draw the bounding box for this location
+        RNLoadRgb(RNwhite_rgb);
+        RNScalar radius[3] = { window_radius / resolution[RN_X], window_radius / resolution[RN_Y], window_radius / resolution[RN_Z] };
+        R3Point center = candidates[candidate_index].center;
+        R3Box(center.X() - radius[RN_X], center.Y() - radius[RN_Y], center.Z() - radius[RN_Z], center.X() + radius[RN_X], center.Y() + radius[RN_Y], center.Z() + radius[RN_Z]).Outline();
     }
 
     // draw the slice if needed
@@ -904,6 +935,18 @@ void GLUTKeyboard(unsigned char key, int x, int y)
             break;
         }
 
+        case 'R':
+        case 'r': {
+            show_rhoana = 1 - show_rhoana;
+            break;
+        }
+
+        case 'S':
+        case 's': {
+            show_segmentation = 1 - show_segmentation;
+            break;
+        }
+
         case 'W':
         case 'w': {
             show_slice = 1 - show_slice;
@@ -1091,13 +1134,23 @@ main(int argc, char** argv)
     //// Read in the voxel files ////
     /////////////////////////////////
 
+    // read the images
     for (int iv = 0; iv < NGRIDS; ++iv) {
         if (!ReadMetaData(prefixes[iv], iv)) exit(-1);
-        if (!ReadVoxelGrids(iv)) exit(-1);
-        LabelToIndexMapping(iv);
+        if (!ReadImageGrids(iv)) exit(-1);
+    }
 
-        // delete rhoana grids to save space
-        delete rhoana_grids[iv];
+    // merge the two images
+    GenerateCombinedImage();
+
+    // delete the images
+    for (int iv = 0; iv < NGRIDS; ++iv)
+        delete image_grids[iv];
+
+    // read rhoana grids
+    for (int iv = 0; iv < NGRIDS; ++iv) {
+        if (!ReadRhoanaGrids(iv)) exit(-1);
+        LabelToIndexMapping(iv);
     }
 
     // find the potential merge candidates
@@ -1110,9 +1163,6 @@ main(int argc, char** argv)
     
     // get the transformation
     transformation = R3Affine(R4Matrix(resolution[RN_X], 0, 0, 0, 0, resolution[RN_Y], 0, 0, 0, 0, resolution[RN_Z], 0, 0, 0, 0, 1));
-
-    // merge the two images
-    GenerateCombinedImage();
 
     // read the existing decision file
     ReadDecisionFile();

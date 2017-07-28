@@ -44,7 +44,6 @@ class R3Curve;
 class R3Polyline;
 class R3PlanarGrid;
 class R3Grid;
-class R3CharGrid;
 
 
 
@@ -110,7 +109,6 @@ class R3CharGrid;
 #include "R3Shapes/R3Sphere.h"
 #include "R3Shapes/R3Ellipsoid.h"
 #include "R3Shapes/R3Grid.h"        
-#include "R3Shapes/R3CharGrid.h"
 
 
 

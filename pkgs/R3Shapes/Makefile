@@ -14,8 +14,7 @@ CCSRCS=$(NAME).cpp \
     R3PlanarGrid.cpp R3Grid.cpp \
     R3Halfspace.cpp R3Plane.cpp R3Span.cpp R3Ray.cpp R3Line.cpp R3Point.cpp R3Vector.cpp \
     R3Base.cpp \
-    ply.cpp \
-    R3CharGrid.cpp
+    ply.cpp
 
 
 #

@@ -4078,6 +4078,95 @@ DrawIsoSurface(RNScalar isolevel) const
 
 
 void R3Grid::
+DrawColorSlice(RNDimension dim, int coord) const
+{
+  // Check coordinates
+  if ((dim < 0) || (dim > 2)) return;
+  if ((coord < 0) || (coord >= Resolution(dim))) return;
+
+  // Get useful variables
+  RNDimension dim1 = (dim+1) % 3;
+  RNDimension dim2 = (dim+2) % 3;
+  int width = Resolution(dim1);
+  int height = Resolution(dim2);
+  const int max_resolution = 1024;
+  if (width > max_resolution) width = max_resolution;
+  if (height > max_resolution) height = max_resolution;
+
+  // Define slice texture
+  static const R3Grid *previous_grid[3] = { NULL, NULL, NULL };
+  static int previous_coord[3] = { -1, -1, -1 };
+  static GLuint texture_id[3] = { 0, 0, 0 };
+  if ((this != previous_grid[dim]) || (coord != previous_coord[dim])) {
+    if (texture_id[dim] != 0) glDeleteTextures(1, &texture_id[dim]);
+    glGenTextures(1, &texture_id[dim]);
+    glBindTexture(GL_TEXTURE_2D, texture_id[dim]);
+    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    static GLfloat pixels[3 * max_resolution * max_resolution];
+    RNInterval range = Range();
+    if (range.Diameter() <= 0) range = RNunit_interval;
+    GLfloat *pixelsp = pixels;
+    for (int j = 0; j < height; j++) {
+      for (int i = 0; i < width; i++) {
+        RNCoord p[3];
+        p[dim] = coord;
+        p[dim1] = (i+0.5) * Resolution(dim1) / width;
+        p[dim2] = (j+0.5) * Resolution(dim2) / height;
+        unsigned int value = (unsigned int) (GridValue(p[0], p[1], p[2]) + 0.5);
+
+
+        *(pixelsp++) = (GLfloat) (((107 * value) % 700) % 255) / 255.0;
+        *(pixelsp++) = (GLfloat) (((509 * value) % 900) % 255) / 255.0;
+        *(pixelsp++) = (GLfloat) (((200 * value) % 777) % 255) / 255.0;
+      }
+    }
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_FLOAT, pixels);
+    previous_coord[dim] = coord;
+    previous_grid[dim] = this;
+  }
+
+  // Set OpenGL modes
+  assert(texture_id[dim]);
+  glBindTexture(GL_TEXTURE_2D, texture_id[dim]);
+  glEnable(GL_TEXTURE_2D);
+
+  // Create quad
+  R3Point p0, p1, p2, p3;
+  p0[dim] = coord; p0[dim1] = 0;                  p0[dim2] = 0;
+  p1[dim] = coord; p1[dim1] = Resolution(dim1)-1; p1[dim2] = 0;
+  p2[dim] = coord; p2[dim1] = Resolution(dim1)-1; p2[dim2] = Resolution(dim2)-1;
+  p3[dim] = coord; p3[dim1] = 0;                  p3[dim2] = Resolution(dim2)-1;
+
+  p0 = WorldPosition(p0);
+  p1 = WorldPosition(p1);
+  p2 = WorldPosition(p2);
+  p3 = WorldPosition(p3);
+
+  // Draw quad 
+  RNScalar one = 1.0;
+  RNScalar zero = 0;
+  R3BeginPolygon();
+  R3LoadTextureCoords(zero, zero);
+  R3LoadPoint(p0[0], p0[1], p0[2]);
+  R3LoadTextureCoords(one, zero);
+  R3LoadPoint(p1[0], p1[1], p1[2]);
+  R3LoadTextureCoords(one, one);
+  R3LoadPoint(p2[0], p2[1], p2[2]);
+  R3LoadTextureCoords(zero, one);
+  R3LoadPoint(p3[0], p3[1], p3[2]);
+  R3EndPolygon();
+
+  // Reset OpenGL modes
+  glDisable(GL_TEXTURE_2D);
+}
+
+
+
+void R3Grid::
 DrawSlice(RNDimension dim, int coord) const
 {
   // Check coordinates
@@ -4086,7 +4175,7 @@ DrawSlice(RNDimension dim, int coord) const
 
   // Get useful variables
   RNDimension dim1 = (dim+1) % 3;
- RNDimension dim2 = (dim+2) % 3;
+  RNDimension dim2 = (dim+2) % 3;
   int width = Resolution(dim1);
   int height = Resolution(dim2);
   const int max_resolution = 1024;

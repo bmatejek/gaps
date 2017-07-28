@@ -168,7 +168,8 @@ public:
   // Visualization functions
   void DrawIsoSurface(RNScalar isolevel) const;
   void DrawSlice(int dim, int coord) const;
-  
+  void DrawColorSlice(int dim, int coord) const;
+
   // Utility functions
   int ConnectedComponents(RNScalar isolevel = 0, int max_components = 0, int *seeds = NULL, int *sizes = NULL, int *grid_components = NULL);
   int GenerateIsoSurface(RNScalar isolevel, R3Point *points, int max_points) const;
