@@ -595,7 +595,13 @@ static void DrawIndividualSegment(unsigned long index, int grid_index)
         if (show_outline) {
             if (projection_dim == RN_X && abs(ix - selected_slice_index[RN_X]) > 1) continue;
             if (projection_dim == RN_Y && abs(iy - selected_slice_index[RN_Y]) > 1) continue;
-            if (projection_dim == RN_Z && abs(iz - selected_slice_index[RN_Z]) > 1) continue;
+            if (projection_dim == RN_Z) {
+                if (meta_data[grid_index].scaled_box.ZMin() != world_box.ZMin()) {
+                    /* TODO fix hard coding */
+                    if (abs(iz + 100 - selected_slice_index[RN_Z]) > 1) continue;
+                }
+                else if (abs(iz - selected_slice_index[RN_Z]) > 1) continue;
+            }
             if (RNRandomScalar() > 0.5) continue;
         }
         else {
@@ -703,11 +709,10 @@ void GLUTRedraw(void)
     if (show_segmentation) {
         unsigned long index_one = candidates[candidate_index].index_one;
         RNLoadRgb(RNred_rgb);
-        DrawIndividualSegment(index_one, 0);
+        DrawIndividualSegment(index_one, GRID_ONE);
         unsigned long index_two = candidates[candidate_index].index_two;
         RNLoadRgb(RNblue_rgb);
-        DrawIndividualSegment(index_two, 1);
-        
+        DrawIndividualSegment(index_two, GRID_TWO);
         // draw the bounding box for this location
         RNLoadRgb(RNwhite_rgb);
         RNScalar radius[3] = { window_radius / resolution[RN_X], window_radius / resolution[RN_Y], window_radius / resolution[RN_Z] };
