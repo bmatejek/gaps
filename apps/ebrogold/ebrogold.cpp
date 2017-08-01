@@ -69,7 +69,7 @@ struct MergeCandidate {
 
 static int print_verbose = 0;
 static const char *prefixes[NGRIDS] = { NULL, NULL };
-static unsigned long threshold = 20000;
+static unsigned long threshold = 10000;
 // window radius in nanometers
 static RNScalar window_radius = 600;
 
