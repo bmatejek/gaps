@@ -68,7 +68,9 @@ static RNScalar background_color[3] = { 0, 0, 0 };
 
 enum DECISION { NO, YES, UNDECIDED };
 std::vector<enum DECISION> decisions = std::vector<enum DECISION>();
-
+std::vector<RNScalar> predictions = std::vector<RNScalar>();
+std::vector<RNScalar> counts = std::vector<RNScalar>();
+//std::vector<unsigned long> incorrect_predictions = std::vector<unsigned long>();
 
 
 
@@ -93,6 +95,69 @@ ReadDecisionFile(void)
         int decision;
         if (fread(&decision, sizeof(int), 1, fp) != 1) return 0;
         decisions.push_back(DECISION(decision));
+    }
+
+    // close file
+    fclose(fp);
+
+    // return success
+    return 1;
+}
+
+
+
+static int
+ReadPredictionFile(void)
+{
+    char input_filename[4096];
+    sprintf(input_filename, "results/ebro/%s-%s-%lu-%dnm.results", prefix_one, prefix_two, threshold, (int)(window_radius + 0.5));   
+
+    // open file
+    FILE *fp = fopen(input_filename, "rb");
+    if (!fp) return 0;
+
+    int ndecisions;
+    if (fread(&ndecisions, sizeof(int), 1, fp) != 1) return 0;
+
+    for (int iv = 0; iv < ndecisions; ++iv) {
+        RNScalar prediction;
+
+        if (fread(&prediction, sizeof(RNScalar), 1, fp) != 1) return 0;
+        predictions.push_back(prediction);
+    }    
+
+    // close file
+    fclose(fp);
+
+    // return success
+    return 1;
+}
+
+
+static int ReadCountFilename(void)
+{
+    // get count filename
+    char count_filename[4096];
+    sprintf(count_filename, "features/ebro/%s-%s-%lu-%dnm.counts", prefix_one, prefix_two, threshold, (int)(window_radius + 0.5));
+
+    // open file
+    FILE *fp = fopen(count_filename, "rb");
+    if (!fp) { fprintf(stderr, "Failed to open %s\n", count_filename); return 0; }
+
+    int ncandidates;
+    if (fread(&ncandidates, sizeof(int), 1, fp) != 1) return 0;
+
+    // read all scores
+    for (int iv = 0; iv < ncandidates; ++iv) {
+        unsigned long count_one;
+        unsigned long count_two;
+        unsigned long overlap_count;
+
+        if (fread(&count_one, sizeof(unsigned long), 1, fp) != 1) return 0;
+        if (fread(&count_two, sizeof(unsigned long), 1, fp) != 1) return 0;
+        if (fread(&overlap_count, sizeof(unsigned long), 1, fp) != 1) return 0;
+
+        counts.push_back(overlap_count / (RNScalar)(count_one + count_two - overlap_count));
     }
 
     // close file
@@ -170,11 +235,11 @@ void GLUTRedraw(void)
     // prologue
     glDisable(GL_LIGHTING);
 
-    transformation.Push();
-
     // draw feature bounding box
     RNLoadRgb(RNwhite_rgb);
     world_box.Outline();
+
+    transformation.Push();
 
     // draw the actual points in 3D
     glBegin(GL_POINTS);
@@ -211,9 +276,24 @@ void GLUTRedraw(void)
 
     // write the feature
     char feature_label[4096];
-    if (decisions[candidate_index] == YES) sprintf(feature_label, "Feature Visualizer - %d - YES - Predicted: \n", candidate_index);
-    if (decisions[candidate_index] == NO) sprintf(feature_label, "Feature Visualizer - %d - NO - Predicted: \n", candidate_index);
-    if (decisions[candidate_index] == UNDECIDED) sprintf(feature_label, "Feature Visualizer - %d - UNDECIDED - Predicted: \n", candidate_index);
+
+    // get the ground truth decision
+    const char *ground_truth = NULL;
+    if (decisions[candidate_index] == YES) ground_truth = "YES";
+    else if (decisions[candidate_index] == NO) ground_truth = "NO";
+    else ground_truth = "UNDECIDED";
+
+    if (candidate_index < (int)predictions.size()) {
+        // get the prediction
+        const char *prediction = NULL;
+        if (predictions[candidate_index] < 0.5) prediction = "NO";
+        else prediction = "YES";
+
+        sprintf(feature_label, "Feature Visualizer - %d - Ground Truth: %s - Predicted: %s - Overlap: %lf\n", candidate_index, ground_truth, prediction, counts[candidate_index]);
+    }
+    else {
+        sprintf(feature_label, "Feature Visualizer - %d - Ground Truth: %s - Overlap: %lf\n", candidate_index, ground_truth, counts[candidate_index]);
+    }
     glutSetWindowTitle(feature_label);
 
     // epilogue
@@ -495,6 +575,12 @@ int main(int argc, char** argv)
     // read in the ground truth file
     if (!ReadDecisionFile()) exit(-1);
 
+    // read in the predictions
+    if (!ReadPredictionFile()) { fprintf(stderr, "No predictions read...\n"); }
+
+    // read in the counts
+    if (!ReadCountFilename()) { exit(-1); }
+
     // read the first feature
     if (!ReadFeature(candidate_index)) exit(-1);
 
@@ -503,7 +589,7 @@ int main(int argc, char** argv)
     }
 
     // set world box
-    world_box = R3Box(0, 0, 0, grid->XResolution(), grid->YResolution(), grid->ZResolution());
+    world_box = R3Box(0, 0, 0, grid->XResolution() * resolution[RN_X], grid->YResolution() * resolution[RN_Y], grid->ZResolution() * resolution[RN_Z]);
     
     // get the transformation
     transformation = R3Affine(R4Matrix(resolution[RN_X], 0, 0, 0, 0, resolution[RN_Y], 0, 0, 0, 0, resolution[RN_Z], 0, 0, 0, 0, 1));

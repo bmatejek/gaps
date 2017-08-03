@@ -307,14 +307,14 @@ static int ReadOverlapCandidates(void)
     if (!fp) { fprintf(stderr, "Failed to open %s\n", overlap_filename); return 0; }
 
     // find the number of candidates
-    unsigned long ncandidates;
-    if (fread(&ncandidates, sizeof(unsigned long), 1, fp) != 1) return 0;
+    int ncandidates;
+    if (fread(&ncandidates, sizeof(int), 1, fp) != 1) return 0;
 
     // initialize empty candidate vector
     candidates = std::vector<struct MergeCandidate>();
 
     // read all candidates
-    for (unsigned long iv = 0; iv < ncandidates; ++iv) {
+    for (int iv = 0; iv < ncandidates; ++iv) {
         unsigned long label_one;
         unsigned long label_two;
         unsigned long xcenter;
@@ -323,9 +323,9 @@ static int ReadOverlapCandidates(void)
 
         if (fread(&label_one, sizeof(unsigned long), 1, fp) != 1) return 0;
         if (fread(&label_two, sizeof(unsigned long), 1, fp) != 1) return 0;
-        if (fread(&xcenter, sizeof(unsigned long), 1, fp) != 1) return 0;
-        if (fread(&ycenter, sizeof(unsigned long), 1, fp) != 1) return 0;
         if (fread(&zcenter, sizeof(unsigned long), 1, fp) != 1) return 0;
+        if (fread(&ycenter, sizeof(unsigned long), 1, fp) != 1) return 0;
+        if (fread(&xcenter, sizeof(unsigned long), 1, fp) != 1) return 0;
 
         unsigned long index_one = label_to_index[GRID_ONE][label_one];
         unsigned long index_two = label_to_index[GRID_TWO][label_two];
@@ -337,7 +337,7 @@ static int ReadOverlapCandidates(void)
     // close file
     fclose(fp);
 
-    if (print_verbose) printf("No. Candidates: %lu\n", ncandidates);
+    if (print_verbose) printf("No. Candidates: %d\n", ncandidates);
 
     // get count filename
     char count_filename[4096];
@@ -348,25 +348,23 @@ static int ReadOverlapCandidates(void)
     if (!fp) { fprintf(stderr, "Failed to open %s\n", count_filename); return 0; }
 
     // find the number of candidates
-    unsigned long ncount_candidates;
-    if (fread(&ncount_candidates, sizeof(unsigned long), 1, fp) != 1) return 0;
+    int ncount_candidates;
+    if (fread(&ncount_candidates, sizeof(int), 1, fp) != 1) return 0;
     rn_assertion(ncount_candidates == ncandidates);
 
     overlap_scores = std::vector<RNScalar>();
 
     // read all scores
-    for (unsigned long iv = 0; iv < ncount_candidates; ++iv) {
+    for (int iv = 0; iv < ncount_candidates; ++iv) {
         unsigned long count_one;
         unsigned long count_two;
         unsigned long overlap_count;
-        RNScalar score;
 
         if (fread(&count_one, sizeof(unsigned long), 1, fp) != 1) return 0;
         if (fread(&count_two, sizeof(unsigned long), 1, fp) != 1) return 0;
         if (fread(&overlap_count, sizeof(unsigned long), 1, fp) != 1) return 0;
-        if (fread(&score, sizeof(RNScalar), 1, fp) != 1) return 0;
 
-        overlap_scores.push_back(score);
+        overlap_scores.push_back(overlap_count / (RNScalar)(count_one + count_two - overlap_count));
     }
 
     // close file
