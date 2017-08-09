@@ -22,6 +22,4 @@ target:
 	cd featureview; $(MAKE) $(TARGET)
 	cd h5view; $(MAKE) $(TARGET)
 	cd neuronview; $(MAKE) $(TARGET)
-	cd skel_dist; $(MAKE) $(TARGET)
-	cd skeleton; $(MAKE) $(TARGET)
 	cd skeletonview; $(MAKE) $(TARGET)
