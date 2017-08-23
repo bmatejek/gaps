@@ -28,6 +28,7 @@ static int print_debug = 0;
 static int print_verbose = 0;
 // maximum distance in nanometers
 static int maximum_distance = 600;
+static int threshold = 20000;
 static const char* prefix = NULL;
 
 
@@ -44,7 +45,12 @@ static R3Box world_box = R3null_box;
 
 // voxel grids
 
-static R3Grid* grid = NULL;
+static R3Grid *grid = NULL;
+static R3Grid *image_grid = NULL;
+static R3Grid *gold_grid = NULL;
+static int selected_slice_index = 0;
+static int show_slice = 0;
+static int projection_dim = RN_Z;
 
 
 
@@ -253,6 +259,20 @@ static int ReadData(void)
     grid_size[RN_Y] = grid->YResolution();
     grid_size[RN_Z] = grid->ZResolution();
 
+    char image_filename[4096];
+    sprintf(image_filename, "images/%s_image.h5", prefix);
+
+    R3Grid **image_grids = RNReadH5File(image_filename, "main");
+    image_grid = image_grids[0];
+    delete[] image_grids;
+
+    char gold_filename[4096];
+    sprintf(gold_filename, "gold/%s_gold.h5", prefix);
+
+    R3Grid **gold_grids = RNReadH5File(gold_filename, "stack");
+    gold_grid = gold_grids[0];
+    delete[] gold_grids;
+
     // print statistics
     if(print_verbose) {
         printf("Read voxel grid...\n");
@@ -271,13 +291,13 @@ static int ReadMergeCandidates(void)
 {
     // get the candidate filename
     char candidate_filename[4096];
-    sprintf(candidate_filename, "skeletons/candidates/%s-%dnm_forward.candidates", prefix, maximum_distance);
+    sprintf(candidate_filename, "features/skeleton/%s-%d-%dnm-inference.candidates", prefix, threshold, maximum_distance);
 
     // open the file
     FILE *fp = fopen(candidate_filename, "rb");
     if (!fp) { fprintf(stderr, "Failed to read %s\n", candidate_filename); return 0; }
 
-    if (fread(&ncandidates, sizeof(unsigned int), 1, fp) != 1) return 0;
+    if (fread(&ncandidates, sizeof(int), 1, fp) != 1) return 0;
 
     // read in all of the candidates
     candidates = new MergeCandidate[ncandidates];
@@ -501,6 +521,10 @@ static void DrawSegmentations(void)
         DrawIndividualSegment(segmentation_index);    
     }
 
+    // draw the slice if desired
+    if (show_slice == 1) image_grid->DrawSlice(projection_dim, selected_slice_index);
+    else if (show_slice == 2) gold_grid->DrawColorSlice(projection_dim, selected_slice_index);
+
     // pop the transformation
     transformation.Pop();
 }
@@ -667,6 +691,20 @@ void GLUTSpecial(int key, int x, int y)
     GLUTmodifiers = glutGetModifiers();
 
     switch(key) {
+        case GLUT_KEY_UP: {
+            selected_slice_index += 2;
+            if (selected_slice_index >= grid_size[projection_dim])
+                selected_slice_index = grid_size[projection_dim] - 1;
+            break;
+        }
+
+        case GLUT_KEY_DOWN: {
+            selected_slice_index -= 2;
+            if (selected_slice_index < 0)
+                selected_slice_index = 0;
+            break;
+        }
+
         case GLUT_KEY_LEFT: {
             if (!show_merge_candidate) {
                 segmentation_index--;
@@ -728,6 +766,30 @@ void GLUTKeyboard(unsigned char key, int x, int y)
         case 'S':
         case 's': {
             show_skeleton = 1 - show_skeleton;
+            break;
+        }
+
+        case 'W':
+        case 'w': {
+            show_slice = (++show_slice) % 3;
+            break;
+        }
+
+        case 'X':
+        case 'x': {
+            projection_dim = RN_X;
+            break;
+        }
+
+        case 'Y':
+        case 'y': {
+            projection_dim = RN_Y;
+            break;
+        }
+
+        case 'Z':
+        case 'z': {
+            projection_dim = RN_Z;
             break;
         }
 
@@ -844,6 +906,7 @@ static int ParseArgs(int argc, char** argv)
             if(!strcmp(*argv, "-v")) print_verbose = 1;
             else if(!strcmp(*argv, "-debug")) print_debug = 1;
             else if(!strcmp(*argv, "-max_distance")) { argv++; argc--; maximum_distance = atoi(*argv); } 
+            else if (!strcmp(*argv, "-threshold")) { argv++; argc--; threshold = atoi(*argv); }
             else { fprintf(stderr, "Invalid program argument: %s\n", *argv); return 0; }
         } else {
             if(!prefix) prefix = *argv;
@@ -887,7 +950,7 @@ int main(int argc, char** argv)
 
     // set world box
     world_box = R3Box(0, 0, 0, resolution[RN_X] * grid_size[RN_X], resolution[RN_Y] * grid_size[RN_Y], resolution[RN_Z] * grid_size[RN_Z]);
-    
+
     // get the transformation
     transformation = R3Affine(R4Matrix(resolution[RN_X], 0, 0, 0, 0, resolution[RN_Y], 0, 0, 0, 0, resolution[RN_Z], 0, 0, 0, 0, 1));
 

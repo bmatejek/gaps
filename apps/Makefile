@@ -19,7 +19,7 @@ release:
 target: 
 	cd ebrogold; $(MAKE) $(TARGET)
 	cd ebroview; $(MAKE) $(TARGET)
-	cd featureview; $(MAKE) $(TARGET)
 	cd h5view; $(MAKE) $(TARGET)
 	cd neuronview; $(MAKE) $(TARGET)
 	cd skeletonview; $(MAKE) $(TARGET)
+	cd skelview; $(MAKE) $(TARGET)
