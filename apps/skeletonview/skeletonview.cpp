@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <iostream>
 
 
 
@@ -30,6 +31,8 @@ static int print_verbose = 0;
 static int maximum_distance = 600;
 static int threshold = 20000;
 static const char* prefix = NULL;
+// filename of the dataset from "extra/" folder to show after gold. Default: prefix_rhoana
+static const char* dataset_extra = NULL;
 
 
 
@@ -48,6 +51,7 @@ static R3Box world_box = R3null_box;
 static R3Grid *grid = NULL;
 static R3Grid *image_grid = NULL;
 static R3Grid *gold_grid = NULL;
+static R3Grid *extra_grid = NULL;
 static int selected_slice_index = 0;
 static int show_slice = 0;
 static int projection_dim = RN_Z;
@@ -94,11 +98,11 @@ static MergeCandidate *candidates = NULL;
 static int show_bbox = 1;
 static int show_skeleton = 1;
 static int show_merge_candidate = 1;
+static int show_legend = 1;
 static unsigned int segmentation_index = 1;
 static unsigned int candidate_index = 0;
 static unsigned int ncandidates;
 static RNScalar downsample_rate = 6.0;
-
 
 
 ////////////////////////////////////////////////////////////////////////
@@ -273,6 +277,25 @@ static int ReadData(void)
     gold_grid = gold_grids[0];
     delete[] gold_grids;
 
+    // if extra dataset provided
+    if(dataset_extra) {
+        char extra_grid_filename[4096];
+        sprintf(extra_grid_filename, "extra/%s.h5", dataset_extra);
+        
+        R3Grid **extra_grids = RNReadH5File(extra_grid_filename, "main");
+        extra_grid = extra_grids[0];
+        delete[] extra_grids;
+    }
+    // if not then use rhoana
+    else {
+        char extra_grid_filename[4096];
+        sprintf(extra_grid_filename, "rhoana/%s_rhoana.h5", prefix);
+        
+        R3Grid **extra_grids = RNReadH5File(extra_grid_filename, "main");
+        extra_grid = extra_grids[0];
+        delete[] extra_grids;
+    }
+
     // print statistics
     if(print_verbose) {
         printf("Read voxel grid...\n");
@@ -337,6 +360,7 @@ static void LabelToIndexMapping(void)
 {
     // find which labels are present
     unsigned long maximum_segmentation = (unsigned long)(grid->Maximum() + 0.5) + 1;
+
     RNBoolean *present_labels = new RNBoolean[maximum_segmentation];
     for (unsigned long iv = 0; iv < maximum_segmentation; ++iv)
         present_labels[iv] = FALSE;
@@ -524,11 +548,63 @@ static void DrawSegmentations(void)
     // draw the slice if desired
     if (show_slice == 1) image_grid->DrawSlice(projection_dim, selected_slice_index);
     else if (show_slice == 2) gold_grid->DrawColorSlice(projection_dim, selected_slice_index);
+    else if (show_slice == 3) extra_grid->DrawColorSlice(projection_dim, selected_slice_index);
 
     // pop the transformation
     transformation.Pop();
 }
 
+
+static void GLUTDrawText(const R2Point& position, const char *s)
+{
+   // draw text string s at position
+   glRasterPos2d(position[0], position[1]);
+   while (*s) glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, *(s++));
+}
+
+// Draw a legend in the lower-left corner
+static void DrawLegend(void)
+{
+   // set projection matrix
+   glMatrixMode(GL_PROJECTION);
+   glPushMatrix();
+   glLoadIdentity();
+   gluOrtho2D(0, GLUTwindow_width, 0, GLUTwindow_height);
+
+   // set model view matrix
+   glMatrixMode(GL_MODELVIEW);
+   glPushMatrix();
+   glLoadIdentity();
+
+   if (show_merge_candidate) {
+       GLUTDrawText(R2Point(10, 230), "Showing merge candidates");
+       MergeCandidate candidate = candidates[candidate_index];
+       char legend1[4096];
+       sprintf(legend1, "Candidate index: %d, Cand.LabelOne: %d, Cand.LabelTwo: %d", candidate_index, candidate.LabelOne(), candidate.LabelTwo());
+       GLUTDrawText(R2Point(10, 210), legend1);
+       char legend2[4096];
+       sprintf(legend2,  "Index(Cand.LabelOne): %d, Index(Cand.LabelTwo): %d", label_to_index[candidate.LabelOne()], label_to_index[candidate.LabelTwo()]);
+       GLUTDrawText(R2Point(10, 190), legend2);
+       GLUTDrawText(R2Point(10, 170), "Ground truth candidates are blue and green");
+       GLUTDrawText(R2Point(10, 150), "Other candidates are red and yellow");
+
+       GLUTDrawText(R2Point(10, 130), "C - show single neurons");      
+   } 
+   else {
+       GLUTDrawText(R2Point(10, 150), "Showing single neurons");
+
+       GLUTDrawText(R2Point(10, 130), "C - show merge candidates"); 
+   }
+
+   GLUTDrawText(R2Point(10, 90), "L - show/hide legend");    
+   GLUTDrawText(R2Point(10, 70), "B - show/hide box");
+   GLUTDrawText(R2Point(10, 50), "S - show/hide skeleton");
+   GLUTDrawText(R2Point(10, 30), "W - show/hide image data/segmentations (X, Y, Z - different projections)");
+   if (show_slice == 1) GLUTDrawText(R2Point(10, 10), "     Current: Image");
+   else if (show_slice == 2) GLUTDrawText(R2Point(10, 10), "     Current: Gold");
+   else if ((show_slice == 3) && (!dataset_extra)) GLUTDrawText(R2Point(10, 10), "     Current: Rhoana");
+   else if ((show_slice == 3) && (dataset_extra)) GLUTDrawText(R2Point(10, 10), "     Current: Extra");
+}
 
 
 ////////////////////////////////////////////////////////////////////////
@@ -577,6 +653,7 @@ void GLUTRedraw(void)
     // prologue
     glDisable(GL_LIGHTING);
 
+
     // draw neuron data bounding box
     if(show_bbox) {
         RNLoadRgb(RNwhite_rgb);
@@ -586,16 +663,21 @@ void GLUTRedraw(void)
     // draw machine labels and skeletons
     DrawSegmentations();
 
+    if(show_legend){
+        DrawLegend();
+    }
+
     // epilogue
     glEnable(GL_LIGHTING);
+
 
     // write the title
     char title[4096];
     if (show_merge_candidate) {
-        sprintf(title, "Skeleton Visualizer - %d\n", candidate_index);    
+        sprintf(title, "Skeleton Visualizer (Merge Candidates, %s) - %d\n", prefix, candidate_index);    
     }
     else {
-        sprintf(title, "Skeleton Visualizer - %lu\n", index_to_label[segmentation_index]);
+        sprintf(title, "Skeleton Visualizer (Single Neurons, %s) - %lu\n", prefix, index_to_label[segmentation_index]);
     }    
     glutSetWindowTitle(title);
 
@@ -771,7 +853,13 @@ void GLUTKeyboard(unsigned char key, int x, int y)
 
         case 'W':
         case 'w': {
-            show_slice = (++show_slice) % 3;
+            show_slice = (++show_slice) % 4;
+            break;
+        }
+
+        case 'L':
+        case 'l': {
+            show_legend = 1 - show_legend;
             break;
         }
 
@@ -907,6 +995,7 @@ static int ParseArgs(int argc, char** argv)
             else if(!strcmp(*argv, "-debug")) print_debug = 1;
             else if(!strcmp(*argv, "-max_distance")) { argv++; argc--; maximum_distance = atoi(*argv); } 
             else if (!strcmp(*argv, "-threshold")) { argv++; argc--; threshold = atoi(*argv); }
+            else if (!strcmp(*argv, "-dataset_extra")) { argv++; argc--; dataset_extra = *argv; }
             else { fprintf(stderr, "Invalid program argument: %s\n", *argv); return 0; }
         } else {
             if(!prefix) prefix = *argv;
