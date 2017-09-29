@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <set>
 
 
 
@@ -21,12 +22,19 @@
 #define SPACEBAR 32
 
 
+// class declarations
+struct RNMeta;
+struct SWCEntry;
+struct MergeCandidate;
+
+
 
 // program arguments
 
 static int print_debug = 0;
 static int print_verbose = 0;
 // maximum distance in nanometers
+static int window_radius = 600;
 static int maximum_distance = 600;
 static int threshold = 20000;
 static const char* prefix = NULL;
@@ -40,6 +48,7 @@ static int grid_size[3] = { -1, -1, -1 };
 static R3Affine transformation = R3null_affine;
 static R3Viewer *viewer = NULL;
 static R3Box world_box = R3null_box;
+
 
 
 
@@ -71,13 +80,6 @@ static RNScalar background_color[3] = { 0, 0, 0 };
 
 
 
-// struct name definitions
-
-struct SWCEntry;
-struct MergeCandidate;
-
-
-
 // mapping and random access variables
 
 static std::map<unsigned long, unsigned long> label_to_index;
@@ -86,6 +88,7 @@ static std::vector<unsigned long> *segmentations = NULL;
 static std::vector<SWCEntry> *skeletons = NULL;
 static std::vector<R3Point> *skeleton_endpoints = NULL;
 static MergeCandidate *candidates = NULL;
+static std::set<unsigned long> *neighbors = NULL;
 
 
 
@@ -94,16 +97,114 @@ static MergeCandidate *candidates = NULL;
 static int show_bbox = 1;
 static int show_skeleton = 1;
 static int show_merge_candidate = 1;
+static int show_feature_box = 1;
+static int show_only_positives = 0;
+static int show_segmentation = 1;
 static unsigned int segmentation_index = 1;
 static unsigned int candidate_index = 0;
 static unsigned int ncandidates;
-static RNScalar downsample_rate = 6.0;
+static RNScalar downsample_rate = 2.0;
+
+
+
+// TODO remove temporary visualization variables
+
+static int *zmin = NULL;
+static int *zmax = NULL;
 
 
 
 ////////////////////////////////////////////////////////////////////////
 // Input/output functions
 ////////////////////////////////////////////////////////////////////////
+
+struct RNMeta {
+    // instance variables
+    int resolution[3];
+    char prefix[4096];
+    char gold_filename[4096];
+    char gold_dataset[128];
+    char image_filename[4096];
+    char image_dataset[128];
+    char mask_filename[4096];
+    char mask_dataset[128];
+    char rhoana_filename[4096];
+    char rhoana_dataset[128];
+    R3Box world_box;
+    R3Box scaled_box;
+};
+
+// declare here
+static RNMeta meta_data;
+
+
+
+static int
+ReadMetaData(const char *prefix)
+{
+    // update the meta data prefix
+    strncpy(meta_data.prefix, prefix, 4096);
+
+    // get the meta data filename
+    char meta_data_filename[4096];
+    sprintf(meta_data_filename, "meta_data/%s.meta", prefix);
+
+    // open the file
+    FILE *fp = fopen(meta_data_filename, "r");
+    if (!fp) { fprintf(stderr, "Failed to read %s\n", meta_data_filename); return 0; }
+
+    // dummy variable
+    char comment[4096];
+
+    // read in requisite information
+    if (!fgets(comment, 4096, fp)) return 0;
+    if (fscanf(fp, "%dx%dx%d\n", &(meta_data.resolution[RN_X]), &(meta_data.resolution[RN_Y]), &(meta_data.resolution[RN_Z])) != 3) return 0;
+    
+    // skip affinities
+    if (!fgets(comment, 4096, fp)) return 0;
+    if (!fgets(comment, 4096, fp)) return 0;
+
+    // skip boundaries
+    if (!fgets(comment, 4096, fp)) return 0;
+    if (!fgets(comment, 4096, fp)) return 0;
+
+    // skip gold
+    if (!fgets(comment, 4096, fp)) return 0;
+    if (fscanf(fp, "%s %s\n", meta_data.gold_filename, meta_data.gold_dataset) != 2) return 0;
+
+    // read image
+    if (!fgets(comment, 4096, fp)) return 0;
+    if (fscanf(fp, "%s %s\n", meta_data.image_filename, meta_data.image_dataset) != 2) return 0;
+
+    // skip mask
+    if (!fgets(comment, 4096, fp)) return 0;
+    if (fscanf(fp, "%s %s\n", meta_data.mask_filename, meta_data.mask_dataset) != 2) return 0;
+
+    // read segmentation
+    if (!fgets(comment, 4096, fp)) return 0;
+    if (fscanf(fp, "%s %s\n", meta_data.rhoana_filename, meta_data.rhoana_dataset) != 2) return 0;
+
+    // skip synapse
+    if (!fgets(comment, 4096, fp)) return 0;
+    if (!fgets(comment, 4096, fp)) return 0;
+
+    // update the global resolution
+    for (int dim = 0; dim <= 2; ++dim)
+        resolution[dim] = meta_data.resolution[dim];
+
+    // skip world box
+    if (!fgets(comment, 4096, fp)) return 0;
+    if (!fgets(comment, 4096, fp)) return 0;
+    meta_data.world_box = R3null_box;
+    meta_data.scaled_box = R3null_box;
+
+    // close the file
+    fclose(fp);
+
+
+    // return success
+    return 1;
+}
 
 struct SWCEntry {
     // constructors
@@ -247,11 +348,7 @@ static int ReadData(void)
     RNTime start_time;
     start_time.Read();
 
-    // read in the grid
-    char grid_filename[4096];
-    sprintf(grid_filename, "rhoana/%s_rhoana.h5", prefix);
-
-    R3Grid **grids = RNReadH5File(grid_filename, "main");
+    R3Grid **grids = RNReadH5File(meta_data.rhoana_filename, meta_data.rhoana_dataset);
     grid = grids[0];
     delete[] grids;
 
@@ -259,17 +356,12 @@ static int ReadData(void)
     grid_size[RN_Y] = grid->YResolution();
     grid_size[RN_Z] = grid->ZResolution();
 
-    char image_filename[4096];
-    sprintf(image_filename, "images/%s_image.h5", prefix);
 
-    R3Grid **image_grids = RNReadH5File(image_filename, "main");
+    R3Grid **image_grids = RNReadH5File(meta_data.image_filename, meta_data.image_dataset);
     image_grid = image_grids[0];
     delete[] image_grids;
 
-    char gold_filename[4096];
-    sprintf(gold_filename, "gold/%s_gold.h5", prefix);
-
-    R3Grid **gold_grids = RNReadH5File(gold_filename, "stack");
+    R3Grid **gold_grids = RNReadH5File(meta_data.gold_filename, meta_data.gold_dataset);
     gold_grid = gold_grids[0];
     delete[] gold_grids;
 
@@ -289,6 +381,10 @@ static int ReadData(void)
 
 static int ReadMergeCandidates(void)
 {
+    // start statistics
+    RNTime start_time;
+    start_time.Read();
+
     // get the candidate filename
     char candidate_filename[4096];
     sprintf(candidate_filename, "features/skeleton/%s-%d-%dnm-inference.candidates", prefix, threshold, maximum_distance);
@@ -299,6 +395,8 @@ static int ReadMergeCandidates(void)
 
     if (fread(&ncandidates, sizeof(int), 1, fp) != 1) return 0;
 
+    int npositives = 0;
+    int nnegatives = 0;
     // read in all of the candidates
     candidates = new MergeCandidate[ncandidates];
     for (unsigned int iv = 0; iv < ncandidates; ++iv) {
@@ -318,10 +416,20 @@ static int ReadMergeCandidates(void)
         if (fread(&ground_truth, sizeof(unsigned long), 1, fp) != 1) return 0;
 
         candidates[iv] = MergeCandidate(label_one, label_two, x, y, z, ground_truth);
+
+        if (ground_truth) npositives++;
+        else nnegatives++;
     }
 
     // close the file
     fclose(fp);
+
+    // print statistics
+    if (print_verbose) {
+        printf("Read %s in %0.2f seconds\n", candidate_filename, start_time.Elapsed());
+        printf(" Positive Candidates: %d\n", npositives);
+        printf(" Negative Candidates: %d\n", nnegatives);
+    }
 
     // return success
     return 1;
@@ -374,13 +482,21 @@ static void LabelToIndexMapping(void)
     segmentations = new std::vector<unsigned long>[nunique_labels];
     skeletons = new std::vector<SWCEntry>[nunique_labels];
     skeleton_endpoints = new std::vector<R3Point>[nunique_labels];
+    zmin = new int[nunique_labels];
+    zmax = new int[nunique_labels];
     for (unsigned long iv = 0; iv < nunique_labels; ++iv) {
         segmentations[iv] = std::vector<unsigned long>();
         skeletons[iv] = std::vector<SWCEntry>();
         skeleton_endpoints[iv] = std::vector<R3Point>();
-
         ReadSWCFile(iv);
+        zmin[iv] = grid->ZResolution();
+        zmax[iv] = 0;
     }
+
+    neighbors = new std::set<unsigned long>[maximum_segmentation];
+    for(unsigned long iv = 0; iv < maximum_segmentation; ++iv) 
+        neighbors[iv] = std::set<unsigned long>();
+
 
     // iterate over the entire volume
     int iv = 0;
@@ -389,6 +505,25 @@ static void LabelToIndexMapping(void)
             for (int ix = 0; ix < grid->XResolution(); ++ix, ++iv) {
                 unsigned long label = (unsigned long)(grid->GridValue(ix, iy, iz) + 0.5);
                 if (!label) continue;
+
+                // look at three neighbor directions
+                if (false) {
+                    if (ix > 0) {
+                        unsigned long neighbor_label = (unsigned long)(grid->GridValue(ix - 1, iy, iz) + 0.5);
+                        neighbors[label].insert(neighbor_label);
+                        neighbors[neighbor_label].insert(label);
+                    }
+                    if (iy > 0) {
+                        unsigned long neighbor_label = (unsigned long)(grid->GridValue(ix, iy - 1, iz) + 0.5);
+                        neighbors[label].insert(neighbor_label);
+                        neighbors[neighbor_label].insert(label);
+                    }
+                    if (iz > 0) {
+                        unsigned long neighbor_label = (unsigned long)(grid->GridValue(ix, iy, iz - 1) + 0.5);
+                        neighbors[label].insert(neighbor_label);
+                        neighbors[neighbor_label].insert(label);
+                    }
+                }
 
                 // is this pixel boundary
                 RNBoolean boundary = FALSE;
@@ -403,14 +538,14 @@ static void LabelToIndexMapping(void)
                 unsigned long index = label_to_index[label];
                 rn_assertion((0 < index) && (index < nunique_labels));
 
+                if (iz < zmin[index]) zmin[index] = iz;
+                if (iz > zmax[index]) zmax[index] = iz;
+
                 // add to the vector
                 if (boundary) segmentations[index].push_back(iv);
             }
         }
     }
-
-    // remove the grid from memory 
-    delete grid;
 }
 
 
@@ -418,6 +553,18 @@ static void LabelToIndexMapping(void)
 ////////////////////////////////////////////////////////////////////////
 // Drawing utility functions
 ////////////////////////////////////////////////////////////////////////
+
+static RNRgb
+Color(unsigned long value)
+{
+    RNScalar red = (RNScalar) (((107 * value) % 700) % 255) / 255.0;
+    RNScalar green = (RNScalar) (((509 * value) % 900) % 255) / 255.0;
+    RNScalar blue = (RNScalar) (((200 * value) % 777) % 255) / 255.0;
+
+    return RNRgb(red, green, blue);
+}
+
+
 
 static void 
 IndexToIndices(int index, int& ix, int& iy, int& iz)
@@ -432,8 +579,9 @@ IndexToIndices(int index, int& ix, int& iy, int& iz)
 
 static void DrawSkeleton(int index)
 {
+    RNLoadRgb(RNwhite_rgb);
+
     if(skeletons[index].size()) {
-        RNLoadRgb(RNwhite_rgb);
         glLineWidth(5.0);
 
         glBegin(GL_LINES);
@@ -451,6 +599,8 @@ static void DrawSkeleton(int index)
         glEnd();
         glLineWidth(1.0);
     }
+
+    RNLoadRgb(RNwhite_rgb);
 }
 
 
@@ -479,51 +629,207 @@ static void DrawSegmentations(void)
         MergeCandidate candidate = candidates[candidate_index];
         if (candidate.GroundTruth()) {
             RNLoadRgb(RNblue_rgb);
-            DrawIndividualSegment(label_to_index[candidate.LabelOne()]);
+            if (show_segmentation) DrawIndividualSegment(label_to_index[candidate.LabelOne()]);
             RNLoadRgb(RNgreen_rgb);
-            DrawIndividualSegment(label_to_index[candidate.LabelTwo()]);
+            if (show_segmentation) DrawIndividualSegment(label_to_index[candidate.LabelTwo()]);
         }
         else {
             RNLoadRgb(RNred_rgb);
-            DrawIndividualSegment(label_to_index[candidate.LabelOne()]);
+            if (show_segmentation) DrawIndividualSegment(label_to_index[candidate.LabelOne()]);
             RNLoadRgb(RNyellow_rgb);
-            DrawIndividualSegment(label_to_index[candidate.LabelTwo()]);
+            if (show_segmentation) DrawIndividualSegment(label_to_index[candidate.LabelTwo()]);
         }
 
-        // draw the central point
-        RNLoadRgb(RNwhite_rgb);
 
-        // draw the bounding box
-        R3Box bounding_box = R3Box(
-            candidate.X() - maximum_distance / resolution[RN_X], 
-            candidate.Y() - maximum_distance / resolution[RN_Y], 
-            candidate.Z() - maximum_distance / resolution[RN_Z], 
-            candidate.X() + maximum_distance / resolution[RN_X], 
-            candidate.Y() + maximum_distance / resolution[RN_Y], 
-            candidate.Z() + maximum_distance / resolution[RN_Z]
-        );
-        bounding_box.Outline();
+        if (show_feature_box) {
+            // draw the central point
+            RNLoadRgb(RNwhite_rgb);
 
-        // draw the central point
-        RNScalar radius = 10.0;
-        R3Box central_point = R3Box(
-            candidate.X() - radius / resolution[RN_X],
-            candidate.Y() - radius / resolution[RN_Y], 
-            candidate.Z() - radius / resolution[RN_Z], 
-            candidate.X() + radius / resolution[RN_X], 
-            candidate.Y() + radius / resolution[RN_Y], 
-            candidate.Z() + radius / resolution[RN_Z]
-        );
-        central_point.Draw();
+            // draw the bounding box
+            R3Box bounding_box = R3Box(
+                candidate.X() - window_radius / resolution[RN_X], 
+                candidate.Y() - window_radius / resolution[RN_Y], 
+                candidate.Z() - window_radius / resolution[RN_Z], 
+                candidate.X() + window_radius / resolution[RN_X], 
+                candidate.Y() + window_radius / resolution[RN_Y], 
+                candidate.Z() + window_radius / resolution[RN_Z]
+            );
+            bounding_box.Outline();
+
+            // draw the central point
+            RNScalar radius = 10.0;
+            R3Box central_point = R3Box(
+                candidate.X() - radius / resolution[RN_X],
+                candidate.Y() - radius / resolution[RN_Y], 
+                candidate.Z() - radius / resolution[RN_Z], 
+                candidate.X() + radius / resolution[RN_X], 
+                candidate.Y() + radius / resolution[RN_Y], 
+                candidate.Z() + radius / resolution[RN_Z]
+            );
+            central_point.Draw();
+        }
+
     }
     else {
-        RNLoadRgb(RNblue_rgb);
-        DrawIndividualSegment(segmentation_index);    
+        // show all large neurons 
+        if (false) {
+            for (unsigned int iv = 0; iv < label_to_index.size(); ++iv) {
+                if (iv % 3 != 1) continue;
+                if (index_to_label[iv] == 3866) continue;
+                int range = zmax[iv] - zmin[iv];
+                if (range > 0.75 * grid->ZResolution()) {
+                    RNLoadRgb(Color(index_to_label[iv]));
+                    DrawIndividualSegment(iv);
+                }
+
+            }
+        }
+
+
+        // show a complete subgraph
+        if (true) {
+            RNScalar best_ratio = 0.0;
+            for (unsigned long i = 0; i < ncandidates; ++i) {
+                // show all neurons close to 6759, 10125
+                unsigned long label_one = candidates[i].label_one;
+                unsigned long label_two = candidates[i].label_two;
+
+                // get the set of unique segments that interact with this pair
+                std::vector<unsigned int> segments = std::vector<unsigned int>();
+                std::set<unsigned int> hash_set = std::set<unsigned int>();
+
+
+                segments.push_back(label_one);
+                hash_set.insert(label_one);
+                segments.push_back(label_two);
+                hash_set.insert(label_two);
+
+                // add all the immediate neighbors
+                for (unsigned long iv = 0; iv < ncandidates; ++iv) {
+                    if (candidates[iv].label_one == 6759 or candidates[iv].label_one == 10125) {
+                        unsigned long neighbor_index = candidates[iv].label_two;
+                        if (hash_set.find(neighbor_index) == hash_set.end()) {
+                            segments.push_back(neighbor_index);
+                            hash_set.insert(neighbor_index);
+                        }
+                    }
+                    if (candidates[iv].label_two == 6759 or candidates[iv].label_two == 10125) {
+                        unsigned long neighbor_index = candidates[iv].label_one;
+                        if (hash_set.find(neighbor_index) == hash_set.end()) {
+                            segments.push_back(neighbor_index);
+                            hash_set.insert(neighbor_index);
+                        }
+                    }
+                }
+
+                // add in all neurons which have two neighbors in this set
+               /* for (unsigned long iv = 0; iv < label_to_index.size(); ++iv) {
+                    unsigned long label = index_to_label[iv];
+
+                    // count the number of neighbor hits
+                    unsigned int nhits = 0;
+                    unsigned int npositives = 0;
+
+                    // iterate over all candidates
+                    for (unsigned long ic = 0; ic < ncandidates; ++ic) {
+                        if (candidates[ic].label_one != label and candidates[ic].label_two != label) continue;
+                        unsigned long neighbor_index = candidates[ic].label_one == label ? candidates[ic].label_two : candidates[ic].label_one;
+                        if (hash_set.find(neighbor_index) != hash_set.end()) {
+                            if (candidates[ic].ground_truth) npositives++;
+                            nhits++;
+                        }
+                    }
+
+                    if (npositives > 1) {
+                        segments.push_back(label);
+                        hash_set.insert(label);
+                    }
+
+                }*/
+
+                // print out the entire graph
+                unsigned long nedges = 0;
+                unsigned long npositives = 0;
+                for (unsigned long ic = 0; ic < ncandidates; ++ic) {
+                    unsigned long label_one = candidates[ic].label_one;
+                    unsigned long label_two = candidates[ic].label_two;
+
+                    // are both candidates in this mess
+                    if (hash_set.find(label_one) == hash_set.end()) continue;
+                    if (hash_set.find(label_two) == hash_set.end()) continue;
+
+                    nedges++;
+                    if (candidates[ic].ground_truth) npositives++;
+                }
+/*
+                for (unsigned long iv = 0; iv < segments.size(); ++iv) {
+                    RNLoadRgb(Color(segments[iv]));
+                    DrawIndividualSegment(label_to_index[segments[iv]]);
+                }
+*/
+                // print out the number of nodes and edges
+                RNScalar ratio = npositives / float(nedges);
+                if (nedges < 15 and ratio > best_ratio) {
+                    printf("Candidate: %d\n", i);
+                    printf("  Labels: %lu %lu\n", label_one, label_two);
+                    printf("  Nodes: %lu\n", segments.size());
+                    printf("  Edges: %lu\n", nedges);
+                    printf("  Positive Edges: %lu\n", npositives);       
+                    best_ratio = ratio;
+                }
+            }
+        }
+        printf("Completed\n");
+
+        
+        if (false) {
+            unsigned long label = segmentation_index;
+            unsigned long nneighbors = 0;
+            for (std::set<unsigned long>::iterator itr = neighbors[label].begin(); itr != neighbors[label].end(); ++itr) {
+                nneighbors++;
+                if (projection_dim == RN_X) {
+                    RNLoadRgb(Color(*itr));
+                    DrawIndividualSegment(label_to_index[*itr]);
+                }
+            }
+
+            unsigned long pruned_neighbors = 0;
+            for (int ic = 0; ic < ncandidates; ++ic) {
+                if (candidates[ic].label_one == label) {
+                    pruned_neighbors++;
+                    if (projection_dim == RN_Y) {
+                        RNLoadRgb(Color(candidates[ic].label_two));
+                        DrawIndividualSegment(label_to_index[candidates[ic].label_two]);
+                    }
+                }
+                if (candidates[ic].label_two == label) {
+                    pruned_neighbors++;
+                    if (projection_dim == RN_Y) {
+                        RNLoadRgb(Color(candidates[ic].label_one));
+                        DrawIndividualSegment(label_to_index[candidates[ic].label_one]);
+                    }
+                }
+            }
+
+            printf("Label %lu:\n", label);
+            printf("  neighbors to consdier %lu\n", nneighbors);
+            printf("  pruned neighbors: %lu\n", pruned_neighbors);
+            RNLoadRgb(Color(label));
+            DrawIndividualSegment(label_to_index[label]);
+        }
+
+        // TODO return to this
+        if (false) {
+            RNLoadRgb(Color(segmentation_index));
+            if (show_segmentation) DrawIndividualSegment(segmentation_index);    
+        }
     }
 
     // draw the slice if desired
+    RNLoadRgb(RNwhite_rgb);
     if (show_slice == 1) image_grid->DrawSlice(projection_dim, selected_slice_index);
     else if (show_slice == 2) gold_grid->DrawColorSlice(projection_dim, selected_slice_index);
+    else if (show_slice == 3) grid->DrawColorSlice(projection_dim, selected_slice_index);
 
     // pop the transformation
     transformation.Pop();
@@ -678,6 +984,23 @@ void GLUTMouse(int button, int state, int x, int y)
 
 
 
+static void DecrementIndex(void)
+{
+    if (candidate_index) --candidate_index;
+    // TODO remove
+    printf("%lu %lu\n", candidates[candidate_index].label_one, candidates[candidate_index].label_two);
+}
+
+
+
+static void IncrementIndex(void)
+{
+    if (candidate_index < ncandidates - 1) ++candidate_index;
+    // TODO remove
+    printf("%lu %lu\n", candidates[candidate_index].label_one, candidates[candidate_index].label_two);
+}
+
+
 void GLUTSpecial(int key, int x, int y)
 {
     // invert y coordinate
@@ -692,14 +1015,14 @@ void GLUTSpecial(int key, int x, int y)
 
     switch(key) {
         case GLUT_KEY_UP: {
-            selected_slice_index += 2;
+            selected_slice_index += 1;
             if (selected_slice_index >= grid_size[projection_dim])
                 selected_slice_index = grid_size[projection_dim] - 1;
             break;
         }
 
         case GLUT_KEY_DOWN: {
-            selected_slice_index -= 2;
+            selected_slice_index -= 1;
             if (selected_slice_index < 0)
                 selected_slice_index = 0;
             break;
@@ -711,8 +1034,9 @@ void GLUTSpecial(int key, int x, int y)
                 if(segmentation_index < 1) segmentation_index = 1;
             }
             else {
-                candidate_index--;
-                if (candidate_index < 0) candidate_index = 0;
+                DecrementIndex();
+                while (show_only_positives && candidate_index && !candidates[candidate_index].ground_truth)
+                    DecrementIndex();
             }
             break;
         }
@@ -724,8 +1048,9 @@ void GLUTSpecial(int key, int x, int y)
                     segmentation_index = label_to_index.size() - 1;
             }
             else {
-                candidate_index++;
-                if (candidate_index >= ncandidates) candidate_index = ncandidates - 1;
+                IncrementIndex();
+                while (show_only_positives && candidate_index < ncandidates - 1 && !candidates[candidate_index].ground_truth)
+                    IncrementIndex();
             }
             break;
         }
@@ -763,6 +1088,24 @@ void GLUTKeyboard(unsigned char key, int x, int y)
             break;
         }
 
+        case 'D':
+        case 'd': {
+            show_segmentation = 1 - show_segmentation;
+            break;
+        }
+
+        case 'F':
+        case 'f': {
+            show_feature_box = 1 - show_feature_box;
+            break;
+        }
+
+        case 'P':
+        case 'p': {
+            show_only_positives = 1 - show_only_positives;
+            break;
+        }
+
         case 'S':
         case 's': {
             show_skeleton = 1 - show_skeleton;
@@ -771,7 +1114,7 @@ void GLUTKeyboard(unsigned char key, int x, int y)
 
         case 'W':
         case 'w': {
-            show_slice = (++show_slice) % 3;
+            show_slice = (++show_slice) % 4;
             break;
         }
 
@@ -940,7 +1283,8 @@ int main(int argc, char** argv)
     //// Read in the voxel files ////
     /////////////////////////////////
 
-    if(!ReadData()) exit(-1);
+    if (!ReadMetaData(prefix)) exit(-1);
+    if (!ReadData()) exit(-1);
 
     // map the labels to indices
     LabelToIndexMapping();
