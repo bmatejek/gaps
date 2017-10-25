@@ -235,10 +235,6 @@ void GLUTRedraw(void)
     // prologue
     glDisable(GL_LIGHTING);
 
-    // draw feature bounding box
-    RNLoadRgb(RNwhite_rgb);
-    world_box.Outline();
-
     transformation.Push();
 
     // draw the actual points in 3D
@@ -289,12 +285,22 @@ void GLUTRedraw(void)
         if (predictions[candidate_index] < 0.5) prediction = "NO";
         else prediction = "YES";
 
+        // draw feature bounding box
+        if (!strcmp(ground_truth, prediction)) RNLoadRgb(RNwhite_rgb);
+        else RNLoadRgb(RNred_rgb);
+        world_box.Outline();
+
+
         sprintf(feature_label, "Feature Visualizer - %d - Ground Truth: %s - Predicted: %s - Overlap: %lf\n", candidate_index, ground_truth, prediction, counts[candidate_index]);
     }
     else {
         sprintf(feature_label, "Feature Visualizer - %d - Ground Truth: %s - Overlap: %lf\n", candidate_index, ground_truth, counts[candidate_index]);
+
+        RNLoadRgb(RNwhite_rgb);
+        world_box.Outline();
     }
     glutSetWindowTitle(feature_label);
+
 
     // epilogue
     glEnable(GL_LIGHTING);

@@ -80,7 +80,7 @@ static int ReadCandidates(void)
 {
     // get the ground truth file
     char candidate_filename[4096];
-    sprintf(candidate_filename, "features/skeleton/%s-%d-%dnm-inference.candidates", prefix, threshold, maximum_distance);
+    sprintf(candidate_filename, "features/skeleton/%s-%d-%dnm-600nm-inference.candidates", prefix, threshold, maximum_distance);
 
     // open the file
     FILE *fp = fopen(candidate_filename, "rb");
@@ -107,7 +107,7 @@ static int ReadPredictions(void)
 {
     // get the prediction filename
     char prediction_filename[4096];
-    sprintf(prediction_filename, "results/skeleton/%s-%d-%dnm.results", prefix, threshold, maximum_distance);
+    sprintf(prediction_filename, "results/skeleton/%s-%d-%dnm-600nm.results", prefix, threshold, maximum_distance);
 
     // open the file
     FILE *fp = fopen(prediction_filename, "rb");
@@ -476,7 +476,7 @@ static R3Viewer* CreateViewer(void)
     if(r < 0 || RNIsInfinite(r)) RNAbort("Error in CreateViewer - r must be positive finite");
 
     // set up camera view looking down the z axis
-    static R3Vector initial_camera_towards = R3Vector(0.0, 0.0, -1.5);
+    static R3Vector initial_camera_towards = R3Vector(0.0, 0.0, -1.0);
     static R3Vector initial_camera_up = R3Vector(0.0, 1.0, 0.0);
     R3Point initial_camera_origin = world_box.Centroid() - initial_camera_towards * 2.5 * r;
     R3Camera camera(initial_camera_origin, initial_camera_towards, initial_camera_up, 0.4, 0.4, 0.1 * r, 1000.0 * r);
@@ -515,7 +515,7 @@ static int ParseArgs(int argc, char** argv)
             if (!strcmp(*argv, "-v")) print_verbose = 1;
             else if (!strcmp(*argv, "-debug")) print_debug = 1;
             else if (!strcmp(*argv, "-threshold")) { argv++; argc--; threshold = atoi(*argv); }
-            else if (!strcmp(*argv, "-maximum_distance")) { argv++; argc--; maximum_distance = atoi(*argv); }
+            else if (!strcmp(*argv, "-max_distance")) { argv++; argc--; maximum_distance = atoi(*argv); }
             else { fprintf(stderr, "Invalid program argument: %s\n", *argv); return 0; }
         } else {
             if (!prefix) { prefix = *argv; } 

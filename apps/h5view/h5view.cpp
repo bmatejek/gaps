@@ -32,7 +32,7 @@ static int GLUTmodifiers = 0;
 static R3Grid **grids = NULL;
 static R3Grid *grid = NULL;
 static R2Grid *selected_slice = NULL;
-static int selected_slice_index = -1;
+static int selected_slice_index = 0;
 static R2Box selected_slice_window = R2null_box;
 static R2Point selected_slice_position(RN_UNKNOWN, RN_UNKNOWN);
 static RNInterval selected_slice_range(0, 0);
@@ -356,14 +356,20 @@ void GLUTSpecial(int key, int x, int y)
     {
     case GLUT_KEY_PAGE_UP:
     case GLUT_KEY_PAGE_DOWN:
+    case GLUT_KEY_UP:
+    case GLUT_KEY_DOWN:
     {
         if (selected_slice)
         {
             int shift = 0;
             if (key == GLUT_KEY_PAGE_DOWN)
-                shift = -1;
+                shift = -10;
             else if (key == GLUT_KEY_PAGE_UP)
-                shift = 1;
+                shift = 10;
+            else if (key == GLUT_KEY_UP)
+                shift += 1;
+            else if (key == GLUT_KEY_DOWN)
+                shift -= 1;
             SelectGrid(selected_slice_index + shift);
             glutPostRedisplay();
         }
@@ -489,7 +495,7 @@ void GLUTInit(int *argc, char **argv)
 void GLUTMainLoop(void)
 {
     // Select first grid
-    SelectGrid(0);
+    SelectGrid(selected_slice_index);
     // Run main loop -- never returns
     glutMainLoop();
 }
@@ -511,6 +517,7 @@ ParseArgs(int argc, char **argv)
             if (!strcmp(*argv, "-v")) print_verbose = 1;
             else if (!strcmp(*argv, "-debug")) print_debug = 1;
             else if (!strcmp(*argv, "-scatter")) scatter = 1;
+            else if (!strcmp(*argv, "-selected_slice_index")) { argv++; argc--; selected_slice_index = atoi(*argv); }
             else { fprintf(stderr, "Invalid program argument: %s", *argv); return 0; }
         }
         else {
