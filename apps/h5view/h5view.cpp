@@ -14,6 +14,8 @@ static int projection_dim = RN_Z;
 static int scatter = 0;
 static int ngrids = 0;
 
+
+
 // GLUT variables
 
 static int GLUTwindow = 0;
@@ -23,15 +25,20 @@ static int GLUTmouse[2] = {0, 0};
 static int GLUTbutton[3] = {0, 0, 0};
 static int GLUTmodifiers = 0;
 
+
+
 // grid viewing variables
+
 static R3Grid **grids = NULL;
 static R3Grid *grid = NULL;
 static R2Grid *selected_slice = NULL;
-static int selected_slice_index = -1;
+static int selected_slice_index = 0;
 static R2Box selected_slice_window = R2null_box;
 static R2Point selected_slice_position(RN_UNKNOWN, RN_UNKNOWN);
 static RNInterval selected_slice_range(0, 0);
 static int color_type = 0; // 0=gray, 1=red-green-blue
+
+
 
 ////////////////////////////////////////////////////////////////////////
 // Utility helper functions
@@ -41,17 +48,11 @@ static RNRgb
 Color(RNScalar value)
 {
     // check for unknown value
-    if (value == R2_GRID_UNKNOWN_VALUE)
-    {
-        if (color_type == 0)
-            return RNRgb(1, 0.5, 0);
-        else
-            return RNblack_rgb;
+    if (value == R2_GRID_UNKNOWN_VALUE) {
+        if (color_type == 0) return RNRgb(1, 0.5, 0);
+        else return RNblack_rgb;
     }
-    else if (value == 0.0)
-    {
-        return RNblack_rgb;
-    }
+    else if (value == 0.0) return RNblack_rgb;
 
     // normalize color
     RNScalar value_min = selected_slice_range.Min();
@@ -59,34 +60,28 @@ Color(RNScalar value)
     RNScalar value_scale = (value_width > 0) ? 1.0 / value_width : 1.0;
     RNScalar normalized_value = value_scale * (value - value_min);
 
-    if (scatter)
-        normalized_value = (RNScalar)((int)(normalized_value * 65536) % 359) / 359;
+    if (scatter) normalized_value = (RNScalar)((int)(normalized_value * 65536) % 359) / 359;
 
     // compute color
     RNRgb c(0, 0, 0);
-    if (color_type == 0)
-    {
+    if (color_type == 0) {
         c[0] = normalized_value;
         c[1] = normalized_value;
         c[2] = normalized_value;
     }
-    else
-    {
-        if (normalized_value < 0.5)
-        {
-            c[0] = 1 - 2 * normalized_value;
-            c[1] = (2 * normalized_value);
-        }
-        else
-        {
-            c[1] = (1 - 2 * (normalized_value - 0.5));
-            c[2] = (2 * (normalized_value - 0.5));
-        }
+    else {
+        unsigned long integral_value = (unsigned long) (value + 0.5);
+
+        c[0] = (((107 * integral_value) % 700) % 255) / 255.0;
+        c[1] = (((509 * integral_value) % 900) % 255) / 255.0;
+        c[2] = (((200 * integral_value) % 777) % 255) / 255.0;
     }
 
     // return color
     return c;
 }
+
+
 
 static void
 SelectGrid(int index)
@@ -125,6 +120,8 @@ SelectGrid(int index)
     selected_slice = slice;
 }
 
+
+
 ////////////////////////////////////////////////////////////////////////
 // GLUT functions
 ////////////////////////////////////////////////////////////////////////
@@ -137,6 +134,8 @@ void GLUTDrawText(const R2Point &p, const char *s)
         glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, *(s++));
 }
 
+
+
 void GLUTStop(void)
 {
     // destro window
@@ -145,6 +144,8 @@ void GLUTStop(void)
     // exit
     exit(0);
 }
+
+
 
 void GLUTRedraw(void)
 {
@@ -220,6 +221,8 @@ void GLUTRedraw(void)
     glutSwapBuffers();
 }
 
+
+
 void GLUTResize(int w, int h)
 {
     // resize window
@@ -243,6 +246,8 @@ void GLUTResize(int w, int h)
     // redraw
     glutPostRedisplay();
 }
+
+
 
 void GLUTMotion(int x, int y)
 {
@@ -288,6 +293,8 @@ void GLUTMotion(int x, int y)
     GLUTmouse[0] = x;
     GLUTmouse[1] = y;
 }
+
+
 
 void GLUTMouse(int button, int state, int x, int y)
 {
@@ -337,6 +344,8 @@ void GLUTMouse(int button, int state, int x, int y)
     glutPostRedisplay();
 }
 
+
+
 void GLUTSpecial(int key, int x, int y)
 {
     // invert y coordinate
@@ -347,14 +356,20 @@ void GLUTSpecial(int key, int x, int y)
     {
     case GLUT_KEY_PAGE_UP:
     case GLUT_KEY_PAGE_DOWN:
+    case GLUT_KEY_UP:
+    case GLUT_KEY_DOWN:
     {
         if (selected_slice)
         {
             int shift = 0;
             if (key == GLUT_KEY_PAGE_DOWN)
-                shift = -1;
+                shift = -10;
             else if (key == GLUT_KEY_PAGE_UP)
-                shift = 1;
+                shift = 10;
+            else if (key == GLUT_KEY_UP)
+                shift += 1;
+            else if (key == GLUT_KEY_DOWN)
+                shift -= 1;
             SelectGrid(selected_slice_index + shift);
             glutPostRedisplay();
         }
@@ -372,6 +387,8 @@ void GLUTSpecial(int key, int x, int y)
     // redraw
     glutPostRedisplay();
 }
+
+
 
 void GLUTKeyboard(unsigned char key, int x, int y)
 {
@@ -444,6 +461,8 @@ void GLUTKeyboard(unsigned char key, int x, int y)
     glutPostRedisplay();
 }
 
+
+
 void GLUTInit(int *argc, char **argv)
 {
     // set window dimensions
@@ -471,13 +490,17 @@ void GLUTInit(int *argc, char **argv)
     glutMotionFunc(GLUTMotion);
 }
 
+
+
 void GLUTMainLoop(void)
 {
     // Select first grid
-    SelectGrid(0);
+    SelectGrid(selected_slice_index);
     // Run main loop -- never returns
     glutMainLoop();
 }
+
+
 
 ////////////////////////////////////////////////////////////////////////
 // Program argument parsing
@@ -487,53 +510,31 @@ static int
 ParseArgs(int argc, char **argv)
 {
     // parse arguments
-    argc--;
-    argv++;
+    argc--; argv++;
     while (argc > 0)
     {
-        if ((*argv)[0] == '-')
-        {
-            if (!strcmp(*argv, "-v"))
-                print_verbose = 1;
-            else if (!strcmp(*argv, "-debug"))
-                print_debug = 1;
-            else if (!strcmp(*argv, "-scatter"))
-                scatter = 1;
-            else
-            {
-                fprintf(stderr, "Invalid program argument: %s", *argv);
-                exit(1);
-            }
+        if ((*argv)[0] == '-') {
+            if (!strcmp(*argv, "-v")) print_verbose = 1;
+            else if (!strcmp(*argv, "-debug")) print_debug = 1;
+            else if (!strcmp(*argv, "-scatter")) scatter = 1;
+            else if (!strcmp(*argv, "-selected_slice_index")) { argv++; argc--; selected_slice_index = atoi(*argv); }
+            else { fprintf(stderr, "Invalid program argument: %s", *argv); return 0; }
         }
-        else
-        {
-            if (!input_filename)
-            {
-                input_filename = *argv;
-                argv++;
-                argc--;
-                dataset_name = *argv;
-            }
-            else
-            {
-                fprintf(stderr, "Invalid program argument: %s", *argv);
-                exit(1);
-            }
-        }
-        argv++;
-        argc--;
+        else {
+            if (!input_filename) { input_filename = *argv; argv++; argc--; dataset_name = *argv; }
+            else { fprintf(stderr, "Invalid program argument: %s", *argv); return 0; }
+        } 
+        argv++; argc--;
     }
 
     // check filenames
-    if (!input_filename || !dataset_name)
-    {
-        fprintf(stderr, "Usage: h5view h5file [dataset_name] [options]\n");
-        return 0;
-    }
+    if (!input_filename || !dataset_name) { fprintf(stderr, "Usage: h5view h5file [dataset_name] [options]\n"); return 0; }
 
     // return OK status
     return 1;
 }
+
+
 
 ////////////////////////////////////////////////////////////////////////
 // Main
@@ -556,37 +557,6 @@ int main(int argc, char **argv)
         printf("  Maximum: %0.2f\n", grid->Maximum());
         printf("  Resolution: %d %d %d\n", grid->XResolution(), grid->YResolution(), grid->ZResolution());
     }
-
-    int grid_maximum = (int) (grid->Maximum() + 0.5);
-    int *unique_grid_values = new int[grid_maximum + 1];
-    for (int iv = 0; iv < grid_maximum + 1; ++iv)
-        unique_grid_values[iv] = 0;
-    for (int iv = 0; iv < grid->NEntries(); ++iv) {
-        int grid_value = (int)(grid->GridValue(iv) + 0.5);
-        unique_grid_values[grid_value] = 1;
-    }
-    int nunique = 0;
-    for (int iv = 0; iv < grid_maximum + 1; ++iv) {
-        nunique += unique_grid_values[iv];
-    }
-
-    // create mapping
-    /*int *mapping = new int[grid_maximum + 1];
-    int seen = 0;
-    for (int iv = 0; iv < grid_maximum + 1; ++iv) {
-        if (unique_grid_values[iv]) {
-            mapping[iv] = seen;
-            seen++;
-        }
-    }
-    
-    for (int iv = 0; iv < grid->NEntries(); ++iv) {
-        int grid_value = (int)(grid->GridValue(iv) + 0.5);
-        grid->SetGridValue(iv, mapping[grid_value]);
-    }
-    
-    RNWriteH5File(&grid, 1, "compressed.h5", "main", TRUE);
-    */
 
     // initialize GLUT
     GLUTInit(&argc, argv);

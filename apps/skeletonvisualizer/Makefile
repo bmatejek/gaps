@@ -2,7 +2,7 @@
 # Application name 
 #
 
-NAME=featureview
+NAME=skeletonview
 
 
 

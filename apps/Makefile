@@ -23,6 +23,5 @@ target:
 	cd goldview; $(MAKE) $(TARGET)
 	cd h5view; $(MAKE) $(TARGET)
 	cd neuronview; $(MAKE) $(TARGET)
-	cd skel_dist; $(MAKE) $(TARGET)
-	cd skeleton; $(MAKE) $(TARGET)
 	cd skeletonview; $(MAKE) $(TARGET)
+	cd skelview; $(MAKE) $(TARGET)

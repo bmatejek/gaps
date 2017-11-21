@@ -21,18 +21,28 @@
 
 // program arguments
 
+static const char* prefix = NULL;
 static int print_debug = 0;
 static int print_verbose = 0;
-static const char* prefix = NULL;
-static int window_width[3] = { -1, -1, -1 };
+static int threshold = 20000;
+static int maximum_distance = 600;
+static RNScalar resolution[3] = { 6, 6, 30 };
 
 
 
 // feature variables
 
-static std::vector<RNBoolean> ground_truth;
+static std::vector<RNScalar> predictions;
+static std::vector<RNBoolean> truths;
+static std::vector<RNBoolean> isCorrect;
 static R3Grid *grid = NULL;
+
+
+
+// toggle variables
+
 static int feature_index = 0;
+static int incorrect_examples = 0;
 
 
 
@@ -41,6 +51,7 @@ static int feature_index = 0;
 static R3Viewer* viewer = NULL;
 static R3Point selected_position;
 static R3Box world_box;
+static R3Affine transformation;
 
 
 
@@ -65,33 +76,61 @@ static RNScalar background_color[3] = { 0, 0, 0 };
 // Input/output functions
 ////////////////////////////////////////////////////////////////////////
 
-static int ReadGroundTruth(void)
+static int ReadCandidates(void)
 {
     // get the ground truth file
-    char ground_truth_filename[4096];
-    sprintf(ground_truth_filename, "%s-ground-truth.txt", prefix);
+    char candidate_filename[4096];
+    sprintf(candidate_filename, "features/skeleton/%s-%d-%dnm-600nm-inference.candidates", prefix, threshold, maximum_distance);
 
     // open the file
-    FILE *fp = fopen(ground_truth_filename, "r");
-    if (!fp) { fprintf(stderr, "Failed to read %s\n", ground_truth_filename); return 0; }
+    FILE *fp = fopen(candidate_filename, "rb");
+    if (!fp) { fprintf(stderr, "Failed to read %s\n", candidate_filename); return 0; }
 
-    // create an empty vector for ground truth
-    ground_truth = std::vector<RNBoolean>();
-    
-    // read in the file line by line
-    char *line = NULL;
-    size_t len = 0;
-    while (getline(&line, &len, fp) != -1) {
-        // add to the array of ground truth values
-        ground_truth.push_back(atoi(line));
+    int ncandidates;
+    if (fread(&ncandidates, sizeof(int), 1, fp) != 1) return 0;
+
+    for (int iv = 0; iv < ncandidates; ++iv) {
+        unsigned long dummy[5];
+        if (fread(&dummy, sizeof(unsigned long), 5, fp) != 5) return 0;
+        unsigned long ground_truth;
+        if (fread(&ground_truth, sizeof(unsigned long), 1, fp) != 1) return 0;
+        truths.push_back(ground_truth);
     }
-
-    // close file
-    fclose(fp);
 
     // return success
     return 1;
 }
+
+
+
+static int ReadPredictions(void)
+{
+    // get the prediction filename
+    char prediction_filename[4096];
+    sprintf(prediction_filename, "results/skeleton/%s-%d-%dnm-600nm.results", prefix, threshold, maximum_distance);
+
+    // open the file
+    FILE *fp = fopen(prediction_filename, "rb");
+    if (!fp) { fprintf(stderr, "Failed to read %s\n", prediction_filename); return 0; }
+
+    int ncandidates;
+    if (fread(&ncandidates, sizeof(int), 1, fp) != 1) return 0;
+    rn_assertion (ncandidates == (int)truths.size())
+
+    for (int iv = 0; iv < ncandidates; ++iv) {
+        RNScalar probability;
+        if (fread(&probability, sizeof(RNScalar), 1, fp) != 1) return 0;
+        predictions.push_back(probability);
+
+        if (probability > 0.5 && truths[iv]) isCorrect.push_back(TRUE);
+        else if (probability < 0.5 && !truths[iv]) isCorrect.push_back(TRUE);
+        else isCorrect.push_back(FALSE);
+    }
+
+    // return success
+    return 1;
+}
+
 
 
 
@@ -102,32 +141,12 @@ static int ReadFeature(int index)
 
     // get the filename for this feature
     char feature_filename[4096];
-    sprintf(feature_filename, "%s/%05d-feature.h5", prefix, index);
+    sprintf(feature_filename, "features/skeleton/%s/%d-%dnm-%05d.h5", prefix, threshold, maximum_distance, index);
 
     // read the feature into an R3Grid
     R3Grid **grids = RNReadH5File(feature_filename, "main");
-    
-    if (window_width[RN_X] > 0 && window_width[RN_Y] > 0 && window_width[RN_Z] > 0) {
-        grid = new R3Grid(window_width[RN_X], window_width[RN_Y], window_width[RN_Z]);
-
-        // iterate over all elements in the new grid
-        for (int iz = 0; iz < window_width[RN_Z]; ++iz) {
-            for (int iy = 0; iy < window_width[RN_Y]; ++iy) {
-                for (int ix = 0; ix < window_width[RN_X]; ++ix) {
-                    int iw = (int)(grids[0]->ZResolution() / (float)window_width[RN_Z] * iz);
-                    int iv = (int)(grids[0]->YResolution() / (float)window_width[RN_Y] * iy);
-                    int iu = (int)(grids[0]->XResolution() / (float)window_width[RN_X] * ix);
-
-                    grid->SetGridValue(ix, iy, iz, grids[0]->GridValue(iu, iv, iw));
-                }
-            }
-        }
-
-        delete grids[0];
-    }
-    else {
-        grid = grids[0];
-    }
+    if (!grids) return 0;
+    grid = grids[0];
 
     delete[] grids;
 
@@ -184,8 +203,11 @@ void GLUTRedraw(void)
     glDisable(GL_LIGHTING);
 
     // draw feature bounding box
-    RNLoadRgb(RNwhite_rgb);
+    if (isCorrect[feature_index]) RNLoadRgb(RNwhite_rgb);
+    else RNLoadRgb(RNred_rgb);
     world_box.Outline();
+
+    transformation.Push();
 
     // draw the actual points in 3D
     glBegin(GL_POINTS);
@@ -194,12 +216,12 @@ void GLUTRedraw(void)
             for (int ix = 0; ix < grid->XResolution(); ++ix) {
                 int grid_value = (int)(grid->GridValue(ix, iy, iz) + 0.5);
                 if (grid_value == 1) {
-                    if (ground_truth[feature_index]) RNLoadRgb(RNgreen_rgb);
+                    if (truths[feature_index]) RNLoadRgb(RNgreen_rgb);
                     else RNLoadRgb(RNred_rgb);
                     glVertex3f(ix, iy, iz);
                 }
                 else if (grid_value == 2) {
-                    if (ground_truth[feature_index]) RNLoadRgb(RNblue_rgb);
+                    if (truths[feature_index]) RNLoadRgb(RNblue_rgb);
                     else RNLoadRgb(RNyellow_rgb);
                     glVertex3f(ix, iy, iz);
                 }
@@ -208,9 +230,26 @@ void GLUTRedraw(void)
     }
     glEnd();
 
-    // write the feature
+    transformation.Pop();
+
+    // get the title
     char feature_label[4096];
-    sprintf(feature_label, "Feature Visualizer - %d - Predicted: \n", feature_index);
+    if (predictions.size()) {
+        const char *ground_truth = NULL;
+        if (truths[feature_index]) ground_truth = "YES";
+        else ground_truth = "NO";
+
+        const char *prediction = NULL;
+        if (predictions[feature_index] > 0.5) prediction = "YES";
+        else prediction = "NO";
+
+        sprintf(feature_label, "Feature Visualizer - %d - Ground Truth: %s - Predicted: %s - Probability: %lf\n", feature_index, ground_truth, prediction, predictions[feature_index]);
+    }
+    else {
+        sprintf(feature_label, "Feature Visualizer - %d\n", feature_index);
+    }
+
+    // write the feature
     glutSetWindowTitle(feature_label);
 
     // epilogue
@@ -294,6 +333,18 @@ void GLUTMouse(int button, int state, int x, int y)
 }
 
 
+static void DecrementIndex(void)
+{
+    if (feature_index) --feature_index;
+}
+
+
+
+static void IncrementIndex(void)
+{
+    if (feature_index < (int)truths.size() - 1) ++feature_index;
+}
+
 
 void GLUTSpecial(int key, int x, int y)
 {
@@ -309,20 +360,22 @@ void GLUTSpecial(int key, int x, int y)
 
     switch(key) {
         case GLUT_KEY_LEFT: {
-            feature_index--;
-            if(feature_index < 0) feature_index = 0;
-            ReadFeature(feature_index);
+            DecrementIndex();
+            while (incorrect_examples && feature_index && isCorrect[feature_index])
+                DecrementIndex();
             break;
         }
 
         case GLUT_KEY_RIGHT: {
-            feature_index++;
-            if(feature_index > (int)ground_truth.size() - 1)
-                feature_index = ground_truth.size() - 1;
-            ReadFeature(feature_index);
+            IncrementIndex();
+            while (incorrect_examples && feature_index < (int)truths.size() - 1 && isCorrect[feature_index])
+                IncrementIndex();
+        
             break;
         }
     }
+
+    ReadFeature(feature_index);    
 
     // redraw
     glutPostRedisplay();
@@ -344,6 +397,11 @@ void GLUTKeyboard(unsigned char key, int x, int y)
 
     // keys regardless of projection status
     switch(key) {
+        case SPACEBAR: {
+            incorrect_examples = 1 - incorrect_examples;
+            break;
+        }
+
         case ESCAPE: {
             GLUTStop();
             break;
@@ -418,7 +476,7 @@ static R3Viewer* CreateViewer(void)
     if(r < 0 || RNIsInfinite(r)) RNAbort("Error in CreateViewer - r must be positive finite");
 
     // set up camera view looking down the z axis
-    static R3Vector initial_camera_towards = R3Vector(0.0, 0.0, -1.5);
+    static R3Vector initial_camera_towards = R3Vector(0.0, 0.0, -1.0);
     static R3Vector initial_camera_up = R3Vector(0.0, 1.0, 0.0);
     R3Point initial_camera_origin = world_box.Centroid() - initial_camera_towards * 2.5 * r;
     R3Camera camera(initial_camera_origin, initial_camera_towards, initial_camera_up, 0.4, 0.4, 0.1 * r, 1000.0 * r);
@@ -456,11 +514,8 @@ static int ParseArgs(int argc, char** argv)
         if ((*argv)[0] == '-') {
             if (!strcmp(*argv, "-v")) print_verbose = 1;
             else if (!strcmp(*argv, "-debug")) print_debug = 1;
-            else if (!strcmp(*argv, "-window_width")) {
-                argv++; argc--; window_width[RN_X] = atoi(*argv);
-                argv++; argc--; window_width[RN_Y] = atoi(*argv);
-                argv++; argc--; window_width[RN_Z] = atoi(*argv);
-            }
+            else if (!strcmp(*argv, "-threshold")) { argv++; argc--; threshold = atoi(*argv); }
+            else if (!strcmp(*argv, "-max_distance")) { argv++; argc--; maximum_distance = atoi(*argv); }
             else { fprintf(stderr, "Invalid program argument: %s\n", *argv); return 0; }
         } else {
             if (!prefix) { prefix = *argv; } 
@@ -492,7 +547,9 @@ int main(int argc, char** argv)
     //////////////////////////////////////////////////
 
     // read in the ground truth file
-    if (!ReadGroundTruth()) exit(-1);
+    if (!ReadCandidates()) exit(-1);
+
+    if (!ReadPredictions()) exit(-1);
 
     // read the first feature
     if (!ReadFeature(feature_index)) exit(-1);
@@ -502,8 +559,11 @@ int main(int argc, char** argv)
     }
 
     // set world box
-    world_box = R3Box(0, 0, 0, grid->XResolution(), grid->YResolution(), grid->ZResolution());
-    
+    world_box = R3Box(0, 0, 0, grid->XResolution() * resolution[RN_X], grid->YResolution() * resolution[RN_Y], grid->ZResolution() * resolution[RN_Z]);
+        
+    // get the transformation
+    transformation = R3Affine(R4Matrix(resolution[RN_X], 0, 0, 0, 0, resolution[RN_Y], 0, 0, 0, 0, resolution[RN_Z], 0, 0, 0, 0, 1));
+
     // create viewer
     viewer = CreateViewer();
     if (!viewer) exit(-1);
