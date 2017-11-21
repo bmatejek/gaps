@@ -307,8 +307,8 @@ static int ReadOverlapCandidates(void)
     if (!fp) { fprintf(stderr, "Failed to open %s\n", overlap_filename); return 0; }
 
     // find the number of candidates
-    int ncandidates;
-    if (fread(&ncandidates, sizeof(int), 1, fp) != 1) return 0;
+    unsigned long ncandidates;
+    if (fread(&ncandidates, sizeof(unsigned long), 1, fp) != 1) return 0;
 
     // initialize empty candidate vector
     candidates = std::vector<struct MergeCandidate>();
@@ -323,9 +323,9 @@ static int ReadOverlapCandidates(void)
 
         if (fread(&label_one, sizeof(unsigned long), 1, fp) != 1) return 0;
         if (fread(&label_two, sizeof(unsigned long), 1, fp) != 1) return 0;
-        if (fread(&zcenter, sizeof(unsigned long), 1, fp) != 1) return 0;
-        if (fread(&ycenter, sizeof(unsigned long), 1, fp) != 1) return 0;
         if (fread(&xcenter, sizeof(unsigned long), 1, fp) != 1) return 0;
+        if (fread(&ycenter, sizeof(unsigned long), 1, fp) != 1) return 0;
+        if (fread(&zcenter, sizeof(unsigned long), 1, fp) != 1) return 0;
 
         unsigned long index_one = label_to_index[GRID_ONE][label_one];
         unsigned long index_two = label_to_index[GRID_TWO][label_two];
@@ -348,8 +348,8 @@ static int ReadOverlapCandidates(void)
     if (!fp) { fprintf(stderr, "Failed to open %s\n", count_filename); return 0; }
 
     // find the number of candidates
-    int ncount_candidates;
-    if (fread(&ncount_candidates, sizeof(int), 1, fp) != 1) return 0;
+    unsigned long ncount_candidates;
+    if (fread(&ncount_candidates, sizeof(unsigned long), 1, fp) != 1) return 0;
     rn_assertion(ncount_candidates == ncandidates);
 
     overlap_scores = std::vector<RNScalar>();
@@ -359,10 +359,12 @@ static int ReadOverlapCandidates(void)
         unsigned long count_one;
         unsigned long count_two;
         unsigned long overlap_count;
+        RNScalar dummy;
 
         if (fread(&count_one, sizeof(unsigned long), 1, fp) != 1) return 0;
         if (fread(&count_two, sizeof(unsigned long), 1, fp) != 1) return 0;
         if (fread(&overlap_count, sizeof(unsigned long), 1, fp) != 1) return 0;
+        if (fread(&dummy, sizeof(unsigned long), 1, fp) != 1) return 0;
 
         overlap_scores.push_back(overlap_count / (RNScalar)(count_one + count_two - overlap_count));
     }
