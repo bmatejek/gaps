@@ -146,8 +146,14 @@ R3Grid **RNReadH5File(const char *h5_filename, const char *dataset_name)
         int affinity_order = 0; // c, z, y, x
         if (ndims == 4 && dims[3] < 5) affinity_order = 1; // z, y, x, c
 
-        int ngrids, zres, yres, xres;
-        if (ndims == 3)
+        long ngrids, zres, yres, xres;
+        if (ndims == 2) {
+          ngrids = 1;
+          zres = 1;
+          yres = dims[0];
+          xres = dims[1];
+        }
+        else if (ndims == 3)
         {
             ngrids = 1;
             zres = dims[0];
@@ -214,11 +220,11 @@ R3Grid **RNReadH5File(const char *h5_filename, const char *dataset_name)
             dataset.read(data, H5::PredType::NATIVE_FLOAT, mem_space, dataspace);
 
             if (!affinity_order) {
-                int ii = 0;
-                for (int ig = 0; ig < ngrids; ++ig) {
-                    for (int iz = 0; iz < zres; ++iz) {
-                        for (int iy = 0; iy < yres; ++iy) {
-                            for (int ix = 0; ix < xres; ++ix, ++ii) {
+                long ii = 0;
+                for (long ig = 0; ig < ngrids; ++ig) {
+                    for (long iz = 0; iz < zres; ++iz) {
+                        for (long iy = 0; iy < yres; ++iy) {
+                            for (long ix = 0; ix < xres; ++ix, ++ii) {
                                 grids[ig]->SetGridValue(ix, iy, iz, data[ii]);
                             }
                         }
@@ -226,11 +232,11 @@ R3Grid **RNReadH5File(const char *h5_filename, const char *dataset_name)
                 }
             }
             else {
-                int ii = 0;
-                for (int iz = 0; iz < zres; ++iz) {
-                    for (int iy = 0; iy < yres; ++iy) {
-                        for (int ix = 0; ix < xres; ++ix) {
-                            for (int ig = 0; ig < ngrids; ++ig, ++ii) {
+                long ii = 0;
+                for (long iz = 0; iz < zres; ++iz) {
+                    for (long iy = 0; iy < yres; ++iy) {
+                        for (long ix = 0; ix < xres; ++ix) {
+                            for (long ig = 0; ig < ngrids; ++ig, ++ii) {
                                 grids[ig]->SetGridValue(ix, iy, iz, data[ii]);
                             }
                         }

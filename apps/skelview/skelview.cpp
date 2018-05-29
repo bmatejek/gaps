@@ -80,7 +80,7 @@ static int ReadCandidates(void)
 {
     // get the ground truth file
     char candidate_filename[4096];
-    sprintf(candidate_filename, "features/skeleton/%s-%d-%dnm-600nm-inference.candidates", prefix, threshold, maximum_distance);
+    sprintf(candidate_filename, "features/skeleton/%s-%d-210nm-%dnm-600nm-inference.candidates", prefix, threshold, maximum_distance);
 
     // open the file
     FILE *fp = fopen(candidate_filename, "rb");
@@ -100,37 +100,6 @@ static int ReadCandidates(void)
     // return success
     return 1;
 }
-
-
-
-static int ReadPredictions(void)
-{
-    // get the prediction filename
-    char prediction_filename[4096];
-    sprintf(prediction_filename, "results/skeleton/%s-%d-%dnm-600nm.results", prefix, threshold, maximum_distance);
-
-    // open the file
-    FILE *fp = fopen(prediction_filename, "rb");
-    if (!fp) { fprintf(stderr, "Failed to read %s\n", prediction_filename); return 0; }
-
-    int ncandidates;
-    if (fread(&ncandidates, sizeof(int), 1, fp) != 1) return 0;
-    rn_assertion (ncandidates == (int)truths.size())
-
-    for (int iv = 0; iv < ncandidates; ++iv) {
-        RNScalar probability;
-        if (fread(&probability, sizeof(RNScalar), 1, fp) != 1) return 0;
-        predictions.push_back(probability);
-
-        if (probability > 0.5 && truths[iv]) isCorrect.push_back(TRUE);
-        else if (probability < 0.5 && !truths[iv]) isCorrect.push_back(TRUE);
-        else isCorrect.push_back(FALSE);
-    }
-
-    // return success
-    return 1;
-}
-
 
 
 
@@ -548,8 +517,6 @@ int main(int argc, char** argv)
 
     // read in the ground truth file
     if (!ReadCandidates()) exit(-1);
-
-    if (!ReadPredictions()) exit(-1);
 
     // read the first feature
     if (!ReadFeature(feature_index)) exit(-1);

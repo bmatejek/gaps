@@ -6,12 +6,13 @@
 
 // program variables
 
-static char *input_filename = NULL;
-static char *dataset_name = NULL;
+static char *image_filename = NULL;
+static char *image_dataset = NULL;
+static char *segment_filename = NULL;
+static char *segment_dataset = NULL;
 static int print_verbose = 0;
 static int print_debug = 0;
 static int projection_dim = RN_Z;
-static int scatter = 0;
 
 
 
@@ -28,15 +29,16 @@ static int GLUTmodifiers = 0;
 
 // grid viewing variables
 
-static R3Grid **grids = NULL;
-static R3Grid *grid = NULL;
-static R2Grid *selected_slice = NULL;
+static double alpha = 0.40;
+static R3Grid *image_grid = NULL;
+static R3Grid *segment_grid = NULL;
+
+static R2Grid *selected_image_slice = NULL;
+static R2Grid *selected_segment_slice = NULL;
+
 static int selected_slice_index = 0;
 static R2Box selected_slice_window = R2null_box;
 static R2Point selected_slice_position(RN_UNKNOWN, RN_UNKNOWN);
-static RNInterval selected_slice_range(0, 0);
-static int color_type = 0; // 0=gray, 1=red-green-blue
-
 
 
 ////////////////////////////////////////////////////////////////////////
@@ -44,29 +46,17 @@ static int color_type = 0; // 0=gray, 1=red-green-blue
 ////////////////////////////////////////////////////////////////////////
 
 static RNRgb
-Color(RNScalar value)
+Color(RNScalar value, bool image_type)
 {
     // check for unknown value
-    if (value == R2_GRID_UNKNOWN_VALUE) {
-        if (color_type == 0) return RNRgb(1, 0.5, 0);
-        else return RNblack_rgb;
-    }
-    else if (value == 0.0) return RNblack_rgb;
-
-    // normalize color
-    RNScalar value_min = selected_slice_range.Min();
-    RNScalar value_width = selected_slice_range.Diameter();
-    RNScalar value_scale = (value_width > 0) ? 1.0 / value_width : 1.0;
-    RNScalar normalized_value = value_scale * (value - value_min);
-
-    if (scatter) normalized_value = (RNScalar)((int)(normalized_value * 65536) % 359) / 359;
+    if (value == R2_GRID_UNKNOWN_VALUE || value == 0.0) { return RNblack_rgb; }
 
     // compute color
     RNRgb c(0, 0, 0);
-    if (color_type == 0) {
-        c[0] = normalized_value;
-        c[1] = normalized_value;
-        c[2] = normalized_value;
+    if (image_type) {
+        c[0] = value / 255.0;
+        c[1] = value / 255.0;
+        c[2] = value / 255.0;
     }
     else {
         unsigned long integral_value = (unsigned long) (value + 0.5);
@@ -90,33 +80,37 @@ SelectGrid(int index)
     // check index
     if (index < 0)
         index = 0;
-    if (index > grid->Resolution(projection_dim) - 1)
-        index = grid->Resolution(projection_dim) - 1;
+    if (index > image_grid->Resolution(projection_dim) - 1)
+        index = image_grid->Resolution(projection_dim) - 1;
 
-    R2Grid *slice = grid->Slice(projection_dim, index);
+    R2Grid *image_slice = image_grid->Slice(projection_dim, index);
+    R2Grid *segment_slice = segment_grid->Slice(projection_dim, index);
+
     // set window title
     char title[4096];
-    sprintf(title, "H5 Viewer %s Slice %d", input_filename, index);
+    sprintf(title, "Overlay Viewer %s %s Slice %d", image_filename, segment_filename, index);
     glutSetWindowTitle(title);
 
     // update display variables
-    if (!selected_slice || (selected_slice->XResolution() != slice->XResolution()) || (selected_slice->YResolution() != slice->YResolution()) || (0 && (selected_slice->WorldToGridTransformation() != slice->WorldToGridTransformation())))
+    if (!selected_image_slice || (selected_image_slice->XResolution() != image_slice->XResolution()) || (selected_image_slice->YResolution() != image_slice->YResolution()))
     {
         RNScalar window_aspect = (double)GLUTwindow_width / (double)GLUTwindow_height;
-        RNScalar grid_aspect = (double)grid->XResolution() / (double)grid->YResolution();
-        R2Point origin = slice->GridBox().Centroid();
-        R2Vector diagonal = slice->GridBox().Max() - origin;
+        RNScalar grid_aspect = (double)image_grid->XResolution() / (double)image_grid->YResolution();
+        R2Point origin = image_slice->GridBox().Centroid();
+        R2Vector diagonal = image_slice->GridBox().Max() - origin;
         diagonal[0] *= window_aspect / grid_aspect;
         selected_slice_window = R2Box(origin - diagonal, origin + diagonal);
         selected_slice_position.Reset(RN_UNKNOWN, RN_UNKNOWN);
     }
 
-    // update min and max values
-    selected_slice_range = grid->Range();
+    // remove the old slices
+    if (selected_image_slice) delete selected_image_slice;
+    if (selected_segment_slice) delete selected_segment_slice;
 
     // update selected grid
+    selected_image_slice = image_slice;
+    selected_segment_slice = segment_slice;
     selected_slice_index = index;
-    selected_slice = slice;
 }
 
 
@@ -149,8 +143,7 @@ void GLUTStop(void)
 void GLUTRedraw(void)
 {
     // check grid
-    if (!selected_slice)
-        return;
+    if (!selected_image_slice || !selected_segment_slice) return;
 
     // clear window
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -171,8 +164,8 @@ void GLUTRedraw(void)
     start_time.Read();
     int xmin = (selected_slice_window.XMin() > 1) ? selected_slice_window.XMin() : 1;
     int ymin = (selected_slice_window.YMin() > 1) ? selected_slice_window.YMin() : 1;
-    int xmax = (selected_slice_window.XMax() + 1 < selected_slice->XResolution() - 1) ? selected_slice_window.XMax() + 1 : selected_slice->XResolution() - 1;
-    int ymax = (selected_slice_window.YMax() + 1 < selected_slice->YResolution() - 1) ? selected_slice_window.YMax() + 1 : selected_slice->YResolution() - 1;
+    int xmax = (selected_slice_window.XMax() + 1 < selected_image_slice->XResolution() - 1) ? selected_slice_window.XMax() + 1 : selected_image_slice->XResolution() - 1;
+    int ymax = (selected_slice_window.YMax() + 1 < selected_image_slice->YResolution() - 1) ? selected_slice_window.YMax() + 1 : selected_image_slice->YResolution() - 1;
     
     for (int j = ymin; j <= ymax; j += 1)
     {
@@ -182,8 +175,12 @@ void GLUTRedraw(void)
         {
             for (int k = -1; k <= 0; k++)
             {
-                RNScalar value = selected_slice->GridValue(i, j + k);
-                RNRgb color = Color(value);
+                RNRgb image_color, seg_color;
+                image_color = Color(selected_image_slice->GridValue(i, j + k), true);
+                seg_color = Color(selected_segment_slice->GridValue(i, j + k), false);
+
+                RNRgb color = alpha * image_color + (1.0 - alpha) * seg_color;
+
                 RNLoadRgb(color);
                 // this transforms the coordinate system to top
                 glVertex2i(i, (ymax) - (j + k));
@@ -197,12 +194,10 @@ void GLUTRedraw(void)
     {
         int ix = (int)(selected_slice_position.X() + 0.5);
         int iy = (int)(ymax - selected_slice_position.Y() + 0.5);
-        RNScalar value = selected_slice->GridValue(ix, iy);
+
         char buffer[1024];
-        if (value != R2_GRID_UNKNOWN_VALUE)
-            sprintf(buffer, "%d %d : %g", ix, iy, value);
-        else
-            sprintf(buffer, "%d %d : %s", ix, iy, "Unknown");
+        sprintf(buffer, "%d %d: %d", ix, iy, (int)(selected_segment_slice->GridValue(ix, iy) + 0.5));
+
         RNLoadRgb(RNmagenta_rgb);
         R2Box(selected_slice_position - 0.5 * R2ones_vector, selected_slice_position + 0.5 * R2ones_vector);
         GLUTDrawText(selected_slice_position + 2 * R2ones_vector, buffer);
@@ -232,12 +227,12 @@ void GLUTResize(int w, int h)
     GLUTwindow_height = h;
 
     // update selected grid window
-    if (selected_slice)
+    if (selected_image_slice)
     {
         RNScalar window_aspect = (double)GLUTwindow_width / (double)GLUTwindow_height;
-        RNScalar grid_aspect = (double)selected_slice->XResolution() / (double)selected_slice->YResolution();
-        R2Point origin = selected_slice->GridBox().Centroid();
-        R2Vector diagonal = selected_slice->GridBox().Max() - origin;
+        RNScalar grid_aspect = (double)selected_image_slice->XResolution() / (double)selected_image_slice->YResolution();
+        R2Point origin = selected_image_slice->GridBox().Centroid();
+        R2Vector diagonal = selected_image_slice->GridBox().Max() - origin;
         diagonal[0] *= window_aspect / grid_aspect;
         selected_slice_window = R2Box(origin - diagonal, origin + diagonal);
     }
@@ -258,7 +253,7 @@ void GLUTMotion(int x, int y)
     int dy = y - GLUTmouse[1];
 
     // view manipulation
-    if (selected_slice)
+    if (selected_image_slice)
     {
         if (GLUTbutton[0])
         {
@@ -357,8 +352,10 @@ void GLUTSpecial(int key, int x, int y)
     case GLUT_KEY_PAGE_DOWN:
     case GLUT_KEY_UP:
     case GLUT_KEY_DOWN:
+    case GLUT_KEY_LEFT:
+    case GLUT_KEY_RIGHT:
     {
-        if (selected_slice)
+        if (selected_image_slice)
         {
             int shift = 0;
             if (key == GLUT_KEY_PAGE_DOWN)
@@ -369,6 +366,14 @@ void GLUTSpecial(int key, int x, int y)
                 shift += 1;
             else if (key == GLUT_KEY_DOWN)
                 shift -= 1;
+            else if (key == GLUT_KEY_LEFT) {
+                alpha -= 0.05;
+                if (alpha < 0) alpha = 0.0;;
+            }
+            else if (key == GLUT_KEY_RIGHT) {
+                alpha += 0.05;
+                if (alpha > 1) alpha = 1.0;
+            }
             SelectGrid(selected_slice_index + shift);
             glutPostRedisplay();
         }
@@ -397,54 +402,35 @@ void GLUTKeyboard(unsigned char key, int x, int y)
     // process keyboard button event
     switch (key)
     {
-    case '1':
-    case '2':
-    case '3':
-    case '4':
-    {
-        int ia = key - '1';
-        grid = grids[ia];
-        printf("%p\n", grid);
-        SelectGrid(selected_slice_index);
-        break;
-    }
+        case 'X':
+        case 'x':
+        {
+            projection_dim = RN_X;
+            SelectGrid(0);
+            break;
+        }
 
-    case 'C':
-    case 'c':
-    {
-        color_type = ((color_type + 1) % 2);
-        break;
-    }
+        case 'Y':
+        case 'y':
+        {
+            projection_dim = RN_Y;
+            SelectGrid(0);
+            break;
+        }
 
-    case 'X':
-    case 'x':
-    {
-        projection_dim = RN_X;
-        SelectGrid(0);
-        break;
-    }
+        case 'Z':
+        case 'z':
+        {
+            projection_dim = RN_Z;
+            SelectGrid(0);
+            break;
+        }
 
-    case 'Y':
-    case 'y':
-    {
-        projection_dim = RN_Y;
-        SelectGrid(0);
-        break;
-    }
-
-    case 'Z':
-    case 'z':
-    {
-        projection_dim = RN_Z;
-        SelectGrid(0);
-        break;
-    }
-
-    case 27:
-    {
-        // ESCAPE
-        GLUTStop();
-        break;
+        case 27:
+        {
+            // ESCAPE
+            GLUTStop();
+            break;
     }
     }
 
@@ -464,9 +450,9 @@ void GLUTKeyboard(unsigned char key, int x, int y)
 void GLUTInit(int *argc, char **argv)
 {
     // set window dimensions
-    RNScalar aspect = (RNScalar)grid->YResolution() / (RNScalar)grid->XResolution();
-    GLUTwindow_width = grid->XResolution();
-    GLUTwindow_height = grid->YResolution();
+    RNScalar aspect = (RNScalar)image_grid->YResolution() / (RNScalar)image_grid->XResolution();
+    GLUTwindow_width = image_grid->XResolution();
+    GLUTwindow_height = image_grid->YResolution();
     GLUTwindow_height = aspect * GLUTwindow_width;
 
     // open window
@@ -474,7 +460,7 @@ void GLUTInit(int *argc, char **argv)
     glutInitWindowPosition(100, 100);
     glutInitWindowSize(GLUTwindow_width, GLUTwindow_height);
     glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH); // | GLUT_STENCIL
-    GLUTwindow = glutCreateWindow("H5 Viewer");
+    GLUTwindow = glutCreateWindow("Overlay Viewer");
 
     // initialize background color
     glClearColor(00, 0.0, 0.0, 1.0);
@@ -514,19 +500,20 @@ ParseArgs(int argc, char **argv)
         if ((*argv)[0] == '-') {
             if (!strcmp(*argv, "-v")) print_verbose = 1;
             else if (!strcmp(*argv, "-debug")) print_debug = 1;
-            else if (!strcmp(*argv, "-scatter")) scatter = 1;
-            else if (!strcmp(*argv, "-selected_slice_index")) { argv++; argc--; selected_slice_index = atoi(*argv); }
             else { fprintf(stderr, "Invalid program argument: %s", *argv); return 0; }
         }
         else {
-            if (!input_filename) { input_filename = *argv; argv++; argc--; dataset_name = *argv; }
+            if (!image_filename) { image_filename = *argv; }
+            else if (!image_dataset) { image_dataset = *argv; }
+            else if (!segment_filename) { segment_filename = *argv; }
+            else if (!segment_dataset) { segment_dataset = *argv; }
             else { fprintf(stderr, "Invalid program argument: %s", *argv); return 0; }
         } 
         argv++; argc--;
     }
 
     // check filenames
-    if (!input_filename || !dataset_name) { fprintf(stderr, "Usage: h5view h5file [dataset_name] [options]\n"); return 0; }
+    if (!image_filename || !image_dataset || !segment_filename || !segment_dataset) { fprintf(stderr, "Usage: overlay image_filename image_dataset segment_filename segment_dataset [options]\n"); return 0; }
 
     // return OK status
     return 1;
@@ -546,14 +533,24 @@ int main(int argc, char **argv)
 
     RNTime start_time;
     start_time.Read();
-    grids = RNReadH5File(input_filename, dataset_name);
-    grid = grids[0];
+
+    R3Grid **image_grids = RNReadH5File(image_filename, image_dataset);
+    R3Grid **segment_grids = RNReadH5File(segment_filename, segment_dataset);
+    image_grid = image_grids[0];
+    segment_grid = segment_grids[0];
+
+    if ((image_grid->XResolution() != segment_grid->XResolution()) || (image_grid->YResolution() != segment_grid->YResolution()) || (image_grid->ZResolution() != segment_grid->ZResolution())) {
+        fprintf(stderr, "Image and segmentation are variable sizes...\n");
+        return -1;
+    }
+
+    // free memory
+    delete[] image_grids;
+    delete[] segment_grids;
 
     if (print_verbose) {
-        printf("Read h5 file in %0.2f seconds\n", start_time.Elapsed());
-        printf("  Minimum: %0.2f\n", grid->Minimum());
-        printf("  Maximum: %0.2f\n", grid->Maximum());
-        printf("  Resolution: %d %d %d\n", grid->XResolution(), grid->YResolution(), grid->ZResolution());
+        printf("Read h5 files in %0.2f seconds\n", start_time.Elapsed());
+        printf("  Resolution: %d %d %d\n", image_grid->XResolution(), image_grid->YResolution(), image_grid->ZResolution());
     }
 
     // initialize GLUT

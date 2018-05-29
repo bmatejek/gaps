@@ -26,7 +26,6 @@
 
 struct RNMeta;
 struct SWCEntry;
-struct MergeCandidate;
 
 
 
@@ -35,13 +34,9 @@ struct MergeCandidate;
 // I/O flags
 static int print_debug = 0;
 static int print_verbose = 0;
-// maximum distance in nanometers
-static int network_distance = 600;
-static int maximum_distance = 210;
-static int endpoint_distance = 300;
-static int threshold = 20000;
 // dataset to examine
-static const char* prefix = NULL;
+static const char *prefix = NULL;
+static const char *filename = NULL;
 
 
 
@@ -98,9 +93,7 @@ static long maximum_segmentation = -1;
 static long maximum_gold = -1;
 static long *segmentation_to_gold = NULL;
 static std::vector<long> *segmentations_per_gold = NULL;
-static std::vector<MergeCandidate> candidates;
-static std::vector<MergeCandidate> undetermined_candidates;
-
+static std::vector<std::vector<long> > segmentation_lists;
 
 
 
@@ -115,8 +108,8 @@ static std::vector<MergeCandidate> undetermined_candidates;
 
 // display variables
 
+static int cycle_colors = 0;
 static int show_bbox = 1;
-static int show_local_bbox = 0;
 static int show_split_errors = 0;
 static int show_skeleton = 1;
 static int show_undetermined = 0;
@@ -126,9 +119,8 @@ static int show_undetermined = 0;
 static int show_only_positives = 0;
 static int show_segmentation = 1;
 static int segmentation_index = 1;
-static int show_merge_candidates = 0;
-static int candidate_index = 0;
-static int undetermined_index = 0;
+static int show_list_candidates = 1;
+static int list_index = 0;
 static int show_gold = 0;
 static int gold_index = 1;
 static int show_slice = 0;
@@ -139,7 +131,7 @@ static int selected_slice_index = 0;
 //static int show_segments = 1;
 //static int *final_labels = NULL;
 //static int show_output = 0;
-static RNScalar downsample_rate = 2.0;
+static RNScalar downsample_rate = 6.0;
 
 
 
@@ -303,47 +295,6 @@ static int ReadSWCFile(int label)
 
 
 
-struct MergeCandidate {
-    // constructors
-    MergeCandidate(void) :
-        label_one(0),
-        label_two(0),
-        x(0),
-        y(0),
-        z(0),
-        ground_truth(FALSE)
-    {
-    }
-
-    MergeCandidate(long label_one, long label_two, long x, long y, long z, bool ground_truth) :
-        label_one(label_one),
-        label_two(label_two),
-        x(x),
-        y(y),
-        z(z),
-        ground_truth(ground_truth)
-    {
-    }
-
-    // access variables
-    long LabelOne(void) { return label_one; }
-    long LabelTwo(void) { return label_two; }
-    long X(void) { return x; }
-    long Y(void) { return y; }
-    long Z(void) { return z; }
-    bool GroundTruth(void) { return ground_truth; }
-
-    // instance variables
-    long label_one;   
-    long label_two;
-    long x;
-    long y;
-    long z;
-    bool ground_truth;
-};
-
-
-
 static void ReadTopologicalSkeleton(int label)
 {
     if (label > 5000) return;
@@ -407,133 +358,35 @@ static int ReadData(void)
 
 
 
-static int ReadMergeCandidates(void)
+static int ReadSegmentCandidates(void)
 {
-    // start statistics
-    RNTime start_time;
-    start_time.Read();
-
-    // create an empty vector
-    candidates = std::vector<MergeCandidate>();
-    
-    // get the candidate filename
-    char positive_filename[4096];
-    sprintf(positive_filename, "features/skeleton/%s-%d-%dnm-%dnm-%dnm-positive.candidates", prefix, threshold, maximum_distance, endpoint_distance, network_distance);
-    
     // open the file
-    FILE *positive_fp = fopen(positive_filename, "rb");
-    if (!positive_fp) { fprintf(stderr, "Failed to read %s\n", positive_filename); return 0; }
+    FILE *fp = fopen(filename, "rb");
+    if (!fp) { fprintf(stderr, "Failed to read%s\n", filename); return 0; }
 
-    int npositive_candidates;
-    if (fread(&npositive_candidates, sizeof(int), 1, positive_fp) != 1) return 0;
+    long nlists;
+    if (fread(&nlists, sizeof(long), 1, fp) != 1) return 0;
 
-    // read in all of the candidates
-    for (int iv = 0; iv < npositive_candidates; ++iv) {
-        long label_one;
-        long label_two;
-        long x;
-        long y;
-        long z;
-        bool ground_truth;
+    // create a new list vector
+    segmentation_lists = std::vector<std::vector<long> >(nlists);
 
-        // read all of the data for this candidate
-        if (fread(&label_one, sizeof(long), 1, positive_fp) != 1) return 0;
-        if (fread(&label_two, sizeof(long), 1, positive_fp) != 1) return 0;
-        if (fread(&z, sizeof(long), 1, positive_fp) != 1) return 0;
-        if (fread(&y, sizeof(long), 1, positive_fp) != 1) return 0;
-        if (fread(&x, sizeof(long), 1, positive_fp) != 1) return 0;
-        if (fread(&ground_truth, sizeof(bool), 1, positive_fp) != 1) return 0;
+    for (long ig = 0; ig < nlists; ++ig) {
+        long nsegments;
+        if (fread(&nsegments, sizeof(long), 1, fp) != 1) return 0;
+        segmentation_lists.push_back(std::vector<long> (nsegments));
 
-        candidates.push_back(MergeCandidate(label_one, label_two, x, y, z, ground_truth));
+        for (long is = 0; is < nsegments; ++is) {
+            long segment_id;
+            if (fread(&segment_id, sizeof(long), 1, fp) != 1) return 0; 
+            segmentation_lists[ig].push_back(segment_id);
+        }
     }
 
-    // close the file
-    fclose(positive_fp);
+    fclose(fp);
 
-    // get the candidate filename
-    char negative_filename[4096];
-    sprintf(negative_filename, "features/skeleton/%s-%d-%dnm-%dnm-%dnm-negative.candidates", prefix, threshold, maximum_distance, endpoint_distance, network_distance);
-    
-    // open the file
-    FILE *negative_fp = fopen(negative_filename, "rb");
-    if (!negative_fp) { fprintf(stderr, "Failed to read %s\n", negative_filename); return 0; }
-
-    int nnegative_candidates;
-    if (fread(&nnegative_candidates, sizeof(int), 1, negative_fp) != 1) return 0;
-
-    // read in all of the candidates
-    for (int iv = 0; iv < nnegative_candidates; ++iv) {
-        long label_one;
-        long label_two;
-        long x;
-        long y;
-        long z;
-        bool ground_truth;
-
-        // read all of the data for this candidate
-        if (fread(&label_one, sizeof(long), 1, negative_fp) != 1) return 0;
-        if (fread(&label_two, sizeof(long), 1, negative_fp) != 1) return 0;
-        if (fread(&z, sizeof(long), 1, negative_fp) != 1) return 0;
-        if (fread(&y, sizeof(long), 1, negative_fp) != 1) return 0;
-        if (fread(&x, sizeof(long), 1, negative_fp) != 1) return 0;
-        if (fread(&ground_truth, sizeof(bool), 1, negative_fp) != 1) return 0;
-
-        candidates.push_back(MergeCandidate(label_one, label_two, x, y, z, ground_truth));
-    }
-
-    // close the file
-    fclose(negative_fp);
-
-    std::random_shuffle(candidates.begin(), candidates.end());
-
-    undetermined_candidates = std::vector<MergeCandidate>();
-
-    // get the candidate filename
-    char undetermined_filename[4096];
-    sprintf(undetermined_filename, "features/skeleton/%s-%d-%dnm-%dnm-%dnm-undetermined.candidates", prefix, threshold, maximum_distance, endpoint_distance, network_distance);
-    
-    // open the file
-    FILE *undetermined_fp = fopen(undetermined_filename, "rb");
-    if (!undetermined_fp) { fprintf(stderr, "Failed to read %s\n", undetermined_filename); return 0; }
-
-    int nundetermined_candidates;
-    if (fread(&nundetermined_candidates, sizeof(int), 1, undetermined_fp) != 1) return 0;
-
-    // read in all of the candidates
-    for (int iv = 0; iv < nundetermined_candidates; ++iv) {
-        long label_one;
-        long label_two;
-        long x;
-        long y;
-        long z;
-        bool ground_truth;
-
-        // read all of the data for this candidate
-        if (fread(&label_one, sizeof(long), 1, undetermined_fp) != 1) return 0;
-        if (fread(&label_two, sizeof(long), 1, undetermined_fp) != 1) return 0;
-        if (fread(&z, sizeof(long), 1, undetermined_fp) != 1) return 0;
-        if (fread(&y, sizeof(long), 1, undetermined_fp) != 1) return 0;
-        if (fread(&x, sizeof(long), 1, undetermined_fp) != 1) return 0;
-        if (fread(&ground_truth, sizeof(bool), 1, undetermined_fp) != 1) return 0;
-
-        undetermined_candidates.push_back(MergeCandidate(label_one, label_two, x, y, z, ground_truth));
-    }
-
-    // close the file
-    fclose(undetermined_fp);
-
-
-    // print statistics
-    if (print_verbose) {
-        printf("Read candidates for %s-%d-%dnm-%dnm-%dnm in %0.2f seconds\n", prefix, threshold, maximum_distance, endpoint_distance, network_distance, start_time.Elapsed());
-        printf(" Positive Candidates: %d\n", npositive_candidates);
-        printf(" Negative Candidates: %d\n", nnegative_candidates);
-        printf(" Undtermined Candidates: %d\n", nundetermined_candidates);
-    }
-
-    // return success
     return 1;
 }
+
 
 
 
@@ -560,6 +413,7 @@ static long IndicesToIndex(long ix, long iy, long iz)
 
 static RNRgb Color(unsigned long value)
 {
+    value = value;
     RNScalar red = (RNScalar) (((107 * value) % 700) % 255) / 255.0;
     RNScalar green = (RNScalar) (((509 * value) % 900) % 255) / 255.0;
     RNScalar blue = (RNScalar) (((200 * value) % 777) % 255) / 255.0;
@@ -689,15 +543,12 @@ static void Preprocessing(void)
         ReadSWCFile(iv);
         ReadTopologicalSkeleton(iv);
     }
-
+    
     // free memory
     for (long is = 0; is < maximum_segmentation; ++is) 
         delete[] seg2gold_overlap[is];
     delete[] seg2gold_overlap;
     delete[] nvoxels_per_segment;
-
-    // read all of the merge candidates
-    if (!ReadMergeCandidates()) exit(-1);
 
     if (print_verbose) {
         printf("Preprocessing...\n");
@@ -801,65 +652,38 @@ static void DrawPointClouds(void)
     // push the transformation
     transformation.Push();
 
-    if (show_undetermined and show_segmentation) {
-        MergeCandidate candidate = undetermined_candidates[undetermined_index];
-
-        RNLoadRgb(RNyellow_rgb);
-        DrawSegment(candidate.LabelOne());
-        RNLoadRgb(RNblue_rgb);
-        DrawSegment(candidate.LabelTwo());
-
-        RNRgb contrast_color = RNRgb(1.0 - background_color[0], 1.0 - background_color[1], 1.0 - background_color[2]);
-        RNLoadRgb(contrast_color);
     
-        R3Box candidate_box = R3Box(candidate.X() - network_distance / resolution[RN_X],
-            candidate.Y() - network_distance / resolution[RN_Y], 
-            candidate.Z() - network_distance / resolution[RN_Z],
-            candidate.X() + network_distance / resolution[RN_X], 
-            candidate.Y() + network_distance / resolution[RN_Y], 
-            candidate.Z() + network_distance / resolution[RN_Z]);
-        candidate_box.Outline();
+    if (show_list_candidates and show_segmentation) {
+        for (unsigned long is = 0; is < segmentation_lists[list_index].size(); ++is) {
+            long segment_id = segmentation_lists[list_index][is];
+
+            RNLoadRgb(Color(segment_id + cycle_colors));
+            DrawSegment(segment_id);
+        }
     }
-    else if (show_merge_candidates and show_segmentation) {
-        MergeCandidate candidate = candidates[candidate_index];
+    else if (show_list_candidates and not show_segmentation) {
+        for (unsigned long is = 0; is < segmentation_lists[list_index].size(); ++is) {
+            long segment_id = segmentation_lists[list_index][is];
 
-        if (candidate.ground_truth) RNLoadRgb(RNgreen_rgb);
-        else RNLoadRgb(RNred_rgb);
-        DrawSegment(candidate.LabelOne());
-        if (candidate.ground_truth) RNLoadRgb(RNblue_rgb);
-        else RNLoadRgb(RNyellow_rgb);
-        DrawSegment(candidate.LabelTwo());
-
-        RNRgb contrast_color = RNRgb(1.0 - background_color[0], 1.0 - background_color[1], 1.0 - background_color[2]);
-        RNLoadRgb(contrast_color);
-
-        if (show_local_bbox) {
-            R3Box candidate_box = R3Box(candidate.X() - network_distance / resolution[RN_X],
-                candidate.Y() - network_distance / resolution[RN_Y], 
-                candidate.Z() - network_distance / resolution[RN_Z],
-                candidate.X() + network_distance / resolution[RN_X], 
-                candidate.Y() + network_distance / resolution[RN_Y], 
-                candidate.Z() + network_distance / resolution[RN_Z]);
-            candidate_box.Outline();
+            if (show_skeleton == 1) DrawToplogicalSkeleton(segment_id);
+            else if (show_skeleton == 2) DrawNeuTuSkeleton(segment_id);
         }
     }
     else if (show_segmentation) {
-        RNLoadRgb(Color(segmentation_index));
+        RNLoadRgb(Color(segmentation_index + cycle_colors));
         DrawSegment(segmentation_index);
 
         // show the neighbors with which it should merge
         long gold_index = segmentation_to_gold[segmentation_index];
-        printf("Labels: %d", segmentation_index);
+
         if (show_split_errors && gold_index) {
             for (unsigned int is = 0; is < segmentations_per_gold[gold_index].size(); ++is) {
                 long neighbor_segment_index = segmentations_per_gold[gold_index][is];
                 if (segmentation_index == neighbor_segment_index) continue;
-                RNLoadRgb(Color(maximum_segmentation - segmentation_index));
+                RNLoadRgb(Color(maximum_segmentation - segmentation_index + cycle_colors));
                 DrawSegment(neighbor_segment_index);
-                printf(" %d", neighbor_segment_index);
             }
         }
-        printf("\n");
     }
 
     if (show_gold) {
@@ -1124,40 +948,24 @@ void GLUTSpecial(int key, int x, int y)
                     gold_index = 0;
             }
             else {
-                if (show_undetermined) {
-                    --undetermined_index;
-                    if (undetermined_index < 0)
-                        undetermined_index = 0;
-                }
-                else if (show_merge_candidates) {
-                    do {
-                        --candidate_index;
-                        if (candidate_index < 0)
-                            candidate_index = 0;    
-                    } while (show_only_positives and not candidates[candidate_index].ground_truth and candidate_index != 0);
-
-                    printf("Labels: %ld %ld\n", candidates[candidate_index].label_one, candidates[candidate_index].label_two);
+                if (show_list_candidates) {
+                    --list_index;
+                    if (list_index < 0)
+                        list_index = 0;    
+                    printf("Labels: ");
+                    for (unsigned long is = 0; is < segmentation_lists[list_index].size(); ++is) {
+                        printf("%ld ", segmentation_lists[list_index][is]);
+                    }
+                    printf("\n");
                 }
                 else {
                     --segmentation_index;
                     if (segmentation_index < 0)
                         segmentation_index = 0;
-
                     printf("Label: %d\n", segmentation_index);
                 }
                 break;
             }
-                
-/*            if (!show_merge_candidate) {
-                segmentation_index--;
-                if(segmentation_index < 0) segmentation_index = 0;
-            }
-            else {
-                DecrementIndex();
-                while (show_only_positives && candidate_index && !candidates[candidate_index].ground_truth)
-                    DecrementIndex();
-            }
-            break;*/
         }
 
         case GLUT_KEY_RIGHT: {
@@ -1167,19 +975,15 @@ void GLUTSpecial(int key, int x, int y)
                     gold_index = maximum_gold - 1;
             }
             else {
-                if (show_undetermined) {
-                    ++undetermined_index;
-                    if (undetermined_index >= (long)undetermined_candidates.size())
-                        undetermined_index = undetermined_candidates.size() - 1;
-                }
-                else if (show_merge_candidates) {
-                    do {
-                        ++candidate_index;
-                        if (candidate_index >= (long)candidates.size())
-                            candidate_index = candidates.size() - 1;
-                    } while (show_only_positives and not candidates[candidate_index].ground_truth and candidate_index != (long) candidates.size() - 1);
-
-                    printf("Labels: %ld %ld\n", candidates[candidate_index].label_one, candidates[candidate_index].label_two);
+                if (show_list_candidates) {
+                    ++list_index;
+                    if (list_index >= (long)segmentation_lists.size())
+                        list_index = segmentation_lists.size() - 1;
+                    printf("Labels: ");
+                    for (unsigned long is = 0; is < segmentation_lists[list_index].size(); ++is) {
+                        printf("%ld ", segmentation_lists[list_index][is]);
+                    }
+                    printf("\n");     
                 }
                 else {
                     ++segmentation_index;
@@ -1190,18 +994,7 @@ void GLUTSpecial(int key, int x, int y)
                 }
                 break;    
             }
-            
-/*            if (!show_merge_candidate) {
-                segmentation_index++;
-                if(segmentation_index >= (int)label_to_index.size())
-                    segmentation_index = label_to_index.size() - 1;
-            }
-            else {
-                IncrementIndex();
-                while (show_only_positives && candidate_index < ncandidates - 1 && !candidates[candidate_index].ground_truth)
-                    IncrementIndex();
-            }
-            break;*/
+
         }
     }
 
@@ -1225,12 +1018,6 @@ void GLUTKeyboard(unsigned char key, int x, int y)
 
     // keys regardless of projection status
     switch(key) {
-        case 'A':
-        case 'a': {
-            show_local_bbox = 1 - show_local_bbox;
-            break;
-        }
-
         case 'B':
         case 'b': {
             show_bbox = 1 - show_bbox;
@@ -1239,7 +1026,7 @@ void GLUTKeyboard(unsigned char key, int x, int y)
 
         case 'C':
         case 'c': {
-            show_merge_candidates = 1 - show_merge_candidates;
+            cycle_colors = (++cycle_colors) % 10;
             break;
         }
 
@@ -1258,7 +1045,12 @@ void GLUTKeyboard(unsigned char key, int x, int y)
         case 'K': 
         case 'k': {
             show_skeleton = (show_skeleton + 1) % 3;
-            break;
+           break;
+        }
+
+        case 'L':
+        case 'l': {
+            show_list_candidates = 1 - show_list_candidates;
         }
 
         case 'P':
@@ -1276,18 +1068,6 @@ void GLUTKeyboard(unsigned char key, int x, int y)
         case 'W':
         case 'w': {
             show_slice = (++show_slice) % 3;
-            break;
-        }
-
-        case 'J':
-        case 'j': {
-            network_distance -= 50;
-            break;
-        }
-
-        case 'L':
-        case 'l': {
-            network_distance += 50;
             break;
         }
 
@@ -1507,20 +1287,18 @@ static int ParseArgs(int argc, char** argv)
         if((*argv)[0] == '-') {
             if(!strcmp(*argv, "-v")) print_verbose = 1;
             else if(!strcmp(*argv, "-debug")) print_debug = 1;
-            else if(!strcmp(*argv, "-max_distance")) { argv++; argc--; maximum_distance = atoi(*argv); } 
-            else if (!strcmp(*argv, "-network_distance")) { argv++; argc--; network_distance = atoi(*argv); }
-            else if (!strcmp(*argv, "-endpoint_distance")) { argv++; argc--; endpoint_distance = atoi(*argv); }
             else { fprintf(stderr, "Invalid program argument: %s\n", *argv); return 0; }
         } else {
             if(!prefix) prefix = *argv;
+            else if (!filename) filename = *argv;
             else { fprintf(stderr, "Invalid program argument: %s\n", *argv); return 0; }
         }
         argv++; argc--;
     }
 
     // error if there is no input name
-    if(!prefix) {
-        fprintf(stderr, "Need to supply a prefix for data files\n");
+    if(!prefix && !filename) {
+        fprintf(stderr, "Need to supply a prefix for data files and a filename with segmentation lists\n");
         return 0;
     }
     //if (training and validation) { fprintf(stderr, "Need to choose either training or validation (or neither), not both\n"); return 0; }
@@ -1543,7 +1321,8 @@ int main(int argc, char** argv)
     /////////////////////////////////
     //// Read in the voxel files ////
     /////////////////////////////////
-
+    
+    if (!ReadSegmentCandidates()) exit(-1);
     if (!ReadMetaData(prefix)) exit(-1);
     if (!ReadData()) exit(-1);
 

@@ -2,7 +2,7 @@
 # Application name 
 #
 
-NAME=skeletonvisualizer
+NAME=nuclearview
 
 
 

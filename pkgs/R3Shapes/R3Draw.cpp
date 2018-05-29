@@ -583,7 +583,7 @@ Draw(const R3DrawFlags draw_flags) const
 
     // Draw surface
     if (draw_flags[R3_SURFACES_DRAW_FLAG]) {
-	for (int i = 0; i < 6; i++) {
+	   for (int i = 0; i < 6; i++) {
 	    R3BeginPolygon();
 	    if (draw_flags[R3_SURFACE_NORMALS_DRAW_FLAG]) 
 		R3LoadNormal(normals[i]);
@@ -598,10 +598,10 @@ Draw(const R3DrawFlags draw_flags) const
 
     // Draw edges
     if (draw_flags[R3_EDGES_DRAW_FLAG]) {
-	R3BeginLine();
-	for (int i = 0; i < 16; i++)
-	    R3LoadPoint(corners[outline_path[i]]);
-	R3EndLine();
+  	   R3BeginLine();
+  	   for (int i = 0; i < 16; i++)
+  	     R3LoadPoint(corners[outline_path[i]]);
+  	   R3EndLine();
     }    
 }
 
