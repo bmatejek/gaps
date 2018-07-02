@@ -36,7 +36,7 @@ struct MergeCandidate;
 static int print_debug = 0;
 static int print_verbose = 0;
 // maximum distance in nanometers
-static int network_distance = 600;
+static int network_distance = 1200;
 static int maximum_distance = 210;
 static int endpoint_distance = 300;
 static int threshold = 20000;

@@ -17,6 +17,8 @@ release:
 	$(MAKE) target "TARGET=$@"
 
 target: 
+	cd 3dview; $(MAKE) $(TARGET)
+	cd downsampleview; $(MAKE) $(TARGET)
 	cd ebrogold; $(MAKE) $(TARGET)
 	cd ebroview; $(MAKE) $(TARGET)
 	cd goldview; $(MAKE) $(TARGET)
