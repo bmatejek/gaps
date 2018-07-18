@@ -67,7 +67,9 @@ static int GLUTmodifiers = 0;
 // random access variables
 
 static std::vector<long> *segmentations = NULL;
-static std::vector<long> *skeletons = NULL;
+static std::vector<long> *thinning_skeletons = NULL;
+static std::vector<long> *medial_skeletons = NULL;
+static std::vector<long> *teaser_skeletons = NULL;
 static long maximum_segmentation = -1;
 
 
@@ -76,6 +78,7 @@ static long maximum_segmentation = -1;
 
 static int show_bbox = 1;
 static int segmentation_index = 1;
+static int skeleton_type = 0;
 static RNScalar downsample_rate = 2.0;
 
 
@@ -125,18 +128,59 @@ static int ReadData(void)
     if (fread(&skeleton_maximum_segmentation, sizeof(long), 1, fp) != 1) return 0;
     assert (skeleton_maximum_segmentation == maximum_segmentation);
 
-    skeletons = new std::vector<long>[maximum_segmentation];
+    thinning_skeletons = new std::vector<long>[maximum_segmentation];
     for (long iv = 0; iv < maximum_segmentation; ++iv) {
-        skeletons[iv] = std::vector<long>();
+        thinning_skeletons[iv] = std::vector<long>();
 
         long nelements; 
         if (fread(&nelements, sizeof(long), 1, fp) != 1) return 0;
         for (long ie = 0; ie < nelements; ++ie) {
             long element;
             if (fread(&element, sizeof(long), 1, fp) != 1) return 0;
-            skeletons[iv].push_back(element);
+            thinning_skeletons[iv].push_back(element);
+        }
+    }  
+    fclose(fp);
+
+    sprintf(input_filename, "topological/%s-topological-downsample-%ldx%ldx%ld-medial-axis-skeleton.pts", prefix, resolution[IB_X], resolution[IB_Y], resolution[IB_Z]);
+    fp = fopen(input_filename, "rb");
+
+    if (fread(&skeleton_maximum_segmentation, sizeof(long), 1, fp) != 1) return 0;
+    assert (skeleton_maximum_segmentation == maximum_segmentation);
+
+    medial_skeletons = new std::vector<long>[maximum_segmentation];
+    for (long iv = 0; iv < maximum_segmentation; ++iv) {
+        medial_skeletons[iv] = std::vector<long>();
+
+        long nelements;
+        if (fread(&nelements, sizeof(long), 1, fp) != 1) return 0;
+        for (long ie = 0; ie < nelements; ++ie) {
+            long element;
+            if (fread(&element, sizeof(long), 1, fp) != 1) return 0;
+            medial_skeletons[iv].push_back(element);
         }
     }
+    fclose(fp);
+
+    sprintf(input_filename, "topological/%s-topological-downsample-%ldx%ldx%ld-teaser-skeleton.pts", prefix, resolution[IB_X], resolution[IB_Y], resolution[IB_Z]);
+    fp = fopen(input_filename, "rb");
+
+    if (fread(&skeleton_maximum_segmentation, sizeof(long), 1, fp) != 1) return 0;
+    assert (skeleton_maximum_segmentation == maximum_segmentation);
+
+    teaser_skeletons = new std::vector<long>[maximum_segmentation];
+    for (long iv = 0; iv < maximum_segmentation; ++iv) {
+        teaser_skeletons[iv] = std::vector<long>();
+
+        long nelements;
+        if (fread(&nelements, sizeof(long), 1, fp) != 1) return 0;
+        for (long ie = 0; ie < nelements; ++ie) {
+            long element;
+            if (fread(&element, sizeof(long), 1, fp) != 1) return 0;
+            teaser_skeletons[iv].push_back(element);
+        }
+    }
+    fclose(fp);
 
     // print statistics
     if(print_verbose) {
@@ -200,6 +244,12 @@ static void DrawSegment(int segment_index)
 
 
 static void DrawSkeleton(int segment_index) {
+    std::vector<long> *skeletons;
+    if (skeleton_type == 0) skeletons = thinning_skeletons;
+    else if (skeleton_type == 1) skeletons = medial_skeletons;
+    else if (skeleton_type == 2) skeletons = teaser_skeletons;
+    else return;
+
     glBegin(GL_POINTS);
     for (unsigned long iv = 0; iv < skeletons[segment_index].size(); ++iv) {
         // get the coordinates from the linear index
@@ -424,6 +474,11 @@ void GLUTKeyboard(unsigned char key, int x, int y)
         case 'b': {
             show_bbox = 1 - show_bbox;
             break;
+        }
+
+        case 'K':
+        case 'k': {
+            skeleton_type = (++skeleton_type) % 4;
         }
 
         case 'X':
