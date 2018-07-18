@@ -2,7 +2,7 @@
 # Application name and list of source files.
 #
 
-NAME=h5view
+NAME=2dview
 CCSRCS=$(NAME).cpp
 
 
