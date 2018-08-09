@@ -1,4 +1,4 @@
-// Source file for the mesh viewer program
+// Source file for the h5 file 2d viewer
 
 // include files
 #include "RNDataStructures/RNDataStructures.h"
@@ -526,7 +526,7 @@ ParseArgs(int argc, char **argv)
     }
 
     // check filenames
-    if (!input_filename || !dataset_name) { fprintf(stderr, "Usage: h5view h5file [dataset_name] [options]\n"); return 0; }
+    if (!input_filename || !dataset_name) { fprintf(stderr, "Usage: 2dview h5file [dataset_name] [options]\n"); return 0; }
 
     // return OK status
     return 1;

@@ -96,7 +96,7 @@ static int ReadData(void)
     start_time.Read();
 
     char input_filename[4096];
-    sprintf(input_filename, "topological/%s-topological-downsample-%ldx%ldx%ld.bytes", prefix, resolution[IB_X], resolution[IB_Y], resolution[IB_Z]);
+    sprintf(input_filename, "skeletons/%s/topological-downsample-%ldx%ldx%ld.bytes", prefix, resolution[IB_X], resolution[IB_Y], resolution[IB_Z]);
 
     FILE *fp = fopen(input_filename, "rb"); 
     if (!fp) { fprintf(stderr, "Failed to read %s\n", input_filename); return 0; }
@@ -121,66 +121,69 @@ static int ReadData(void)
 
     fclose(fp);
 
-    sprintf(input_filename, "topological/%s-topological-downsample-%ldx%ldx%ld-thinning-skeleton.pts", prefix, resolution[IB_X], resolution[IB_Y], resolution[IB_Z]);
+    sprintf(input_filename, "skeletons/%s/topological-downsample-%ldx%ldx%ld-thinning-skeleton.pts", prefix, resolution[IB_X], resolution[IB_Y], resolution[IB_Z]);
     fp = fopen(input_filename, "rb");
-
     long skeleton_maximum_segmentation;
-    if (fread(&skeleton_maximum_segmentation, sizeof(long), 1, fp) != 1) return 0;
-    assert (skeleton_maximum_segmentation == maximum_segmentation);
+    if (fp) {
+        if (fread(&skeleton_maximum_segmentation, sizeof(long), 1, fp) != 1) return 0;
+        assert (skeleton_maximum_segmentation == maximum_segmentation);
 
-    thinning_skeletons = new std::vector<long>[maximum_segmentation];
-    for (long iv = 0; iv < maximum_segmentation; ++iv) {
-        thinning_skeletons[iv] = std::vector<long>();
+        thinning_skeletons = new std::vector<long>[maximum_segmentation];
+        for (long iv = 0; iv < maximum_segmentation; ++iv) {
+            thinning_skeletons[iv] = std::vector<long>();
 
-        long nelements; 
-        if (fread(&nelements, sizeof(long), 1, fp) != 1) return 0;
-        for (long ie = 0; ie < nelements; ++ie) {
-            long element;
-            if (fread(&element, sizeof(long), 1, fp) != 1) return 0;
-            thinning_skeletons[iv].push_back(element);
-        }
-    }  
-    fclose(fp);
-
-    sprintf(input_filename, "topological/%s-topological-downsample-%ldx%ldx%ld-medial-axis-skeleton.pts", prefix, resolution[IB_X], resolution[IB_Y], resolution[IB_Z]);
-    fp = fopen(input_filename, "rb");
-
-    if (fread(&skeleton_maximum_segmentation, sizeof(long), 1, fp) != 1) return 0;
-    assert (skeleton_maximum_segmentation == maximum_segmentation);
-
-    medial_skeletons = new std::vector<long>[maximum_segmentation];
-    for (long iv = 0; iv < maximum_segmentation; ++iv) {
-        medial_skeletons[iv] = std::vector<long>();
-
-        long nelements;
-        if (fread(&nelements, sizeof(long), 1, fp) != 1) return 0;
-        for (long ie = 0; ie < nelements; ++ie) {
-            long element;
-            if (fread(&element, sizeof(long), 1, fp) != 1) return 0;
-            medial_skeletons[iv].push_back(element);
-        }
+            long nelements; 
+            if (fread(&nelements, sizeof(long), 1, fp) != 1) return 0;
+            for (long ie = 0; ie < nelements; ++ie) {
+                long element;
+                if (fread(&element, sizeof(long), 1, fp) != 1) return 0;
+                thinning_skeletons[iv].push_back(abs(element));
+            }
+        }  
+        fclose(fp);
     }
-    fclose(fp);
 
-    sprintf(input_filename, "topological/%s-topological-downsample-%ldx%ldx%ld-teaser-skeleton.pts", prefix, resolution[IB_X], resolution[IB_Y], resolution[IB_Z]);
+    sprintf(input_filename, "skeletons/%s/topological-downsample-%ldx%ldx%ld-medial-axis-skeleton.pts", prefix, resolution[IB_X], resolution[IB_Y], resolution[IB_Z]);
     fp = fopen(input_filename, "rb");
+    if (fp) {
+        if (fread(&skeleton_maximum_segmentation, sizeof(long), 1, fp) != 1) return 0;
+        assert (skeleton_maximum_segmentation == maximum_segmentation);
 
-    if (fread(&skeleton_maximum_segmentation, sizeof(long), 1, fp) != 1) return 0;
-    assert (skeleton_maximum_segmentation == maximum_segmentation);
+        medial_skeletons = new std::vector<long>[maximum_segmentation];
+        for (long iv = 0; iv < maximum_segmentation; ++iv) {
+            medial_skeletons[iv] = std::vector<long>();
 
-    teaser_skeletons = new std::vector<long>[maximum_segmentation];
-    for (long iv = 0; iv < maximum_segmentation; ++iv) {
-        teaser_skeletons[iv] = std::vector<long>();
-
-        long nelements;
-        if (fread(&nelements, sizeof(long), 1, fp) != 1) return 0;
-        for (long ie = 0; ie < nelements; ++ie) {
-            long element;
-            if (fread(&element, sizeof(long), 1, fp) != 1) return 0;
-            teaser_skeletons[iv].push_back(element);
+            long nelements;
+            if (fread(&nelements, sizeof(long), 1, fp) != 1) return 0;
+            for (long ie = 0; ie < nelements; ++ie) {
+                long element;
+                if (fread(&element, sizeof(long), 1, fp) != 1) return 0;
+                medial_skeletons[iv].push_back(abs(element));
+            }
         }
+        fclose(fp);
     }
-    fclose(fp);
+
+    sprintf(input_filename, "skeletons/%s/topological-downsample-%ldx%ldx%ld-teaser-skeleton.pts", prefix, resolution[IB_X], resolution[IB_Y], resolution[IB_Z]);
+    fp = fopen(input_filename, "rb");
+    if (fp) {
+        if (fread(&skeleton_maximum_segmentation, sizeof(long), 1, fp) != 1) return 0;
+        assert (skeleton_maximum_segmentation == maximum_segmentation);
+
+        teaser_skeletons = new std::vector<long>[maximum_segmentation];
+        for (long iv = 0; iv < maximum_segmentation; ++iv) {
+            teaser_skeletons[iv] = std::vector<long>();
+
+            long nelements;
+            if (fread(&nelements, sizeof(long), 1, fp) != 1) return 0;
+            for (long ie = 0; ie < nelements; ++ie) {
+                long element;
+                if (fread(&element, sizeof(long), 1, fp) != 1) return 0;
+                teaser_skeletons[iv].push_back(abs(element));
+            }
+        }
+        fclose(fp);
+    }
 
     // print statistics
     if(print_verbose) {

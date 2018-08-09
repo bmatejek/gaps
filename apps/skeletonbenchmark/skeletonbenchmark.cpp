@@ -20,7 +20,7 @@
 #define ENTER 13
 #define ESCAPE 27
 #define SPACEBAR 32
-
+#define DELETE 127
 
 // class declarations
 
@@ -272,7 +272,7 @@ static int ReadLargestSegments(void)
 // Helper functions
 ////////////////////////////////////////////////////////////////////////
 
-static void IndexToIndices(int index, int& ix, int& iy, int& iz)
+static void IndexToIndices(long index, long& ix, long& iy, long& iz)
 {
   // Set indices of grid value at index
   iz = index / (grid_size[RN_X] * grid_size[RN_Y]);
@@ -353,14 +353,16 @@ static void Preprocessing(void)
 
 static void DrawEndpoints()
 {
-    glBegin(GL_POINTS);
     glPointSize(10.0);
+    glBegin(GL_POINTS);
+    RNLoadRgb(RNRgb(not background_color[0], not background_color[1], not background_color[2]));
     for (unsigned long ie = 0; ie < skeleton_endpoints.size(); ++ie) {
         R3Point endpoint = skeleton_endpoints[ie];
         glVertex3f(endpoint.X(), endpoint.Y(), endpoint.Z());
     }
-    glPointSize(1.0);
     glEnd();
+    glPointSize(1.0);
+
 }
 
 
@@ -373,7 +375,7 @@ static void DrawGold(int segment_index)
         if (RNRandomScalar() > 1.0 / downsample_rate) continue;
 
         // get the coordinates from the linear index
-        int ix, iy, iz;
+        long ix, iy, iz;
         IndexToIndices(golds[segment_index][iv], ix, iy, iz);
         glVertex3f(ix, iy, iz);
     }
@@ -560,6 +562,8 @@ void ReadSkeletonEndpoints(void)
 
 void WriteSkeletonEndpoints(void)
 {
+    if (not skeleton_endpoints.size()) return;
+
     char output_filename[4096];
     sprintf(output_filename, "%s/example-%d.pts", output_directory, example_index);
 
@@ -647,6 +651,100 @@ void GLUTKeyboard(unsigned char key, int x, int y)
             break;
         }
 
+        case 'E':
+        case 'e': {
+            R3Ray world_ray = viewer->WorldRay(x, y);
+
+            RNLength closest_distance = DBL_MAX;
+            R3Point closest_point;
+
+            static const int buffer = 40;
+
+            for (unsigned long ig = 0; ig < golds[gold_index].size(); ++ig) {
+                long iv = golds[gold_index][ig];
+
+                // convert to three coordinates
+                long ix, iy, iz;
+                IndexToIndices(iv, ix, iy, iz);
+
+                R3Point location = R3Point(ix, iy, iz);
+                location.Transform(transformation);
+
+                RNLength distance = R3Distance(world_ray, location);
+
+                if (distance < closest_distance) {
+                    closest_distance = distance;
+                    closest_point = R3Point(ix, iy, iz);
+                }
+            }
+
+            // find the next closest point farther down the ray
+            closest_distance = DBL_MAX;
+            R3Point second_closest_point;
+
+            for (unsigned long ig = 0 ; ig < golds[gold_index].size(); ++ig) {
+                long iv = golds[gold_index][ig];
+
+                long ix, iy, iz;
+                IndexToIndices(iv, ix, iy, iz);
+
+                R3Point location = R3Point(ix, iy, iz);
+                location.Transform(transformation);
+
+                RNLength distance = R3Distance(world_ray, location);
+                
+                long deltaz = (long) (closest_point.Z() - iz + 0.5);
+                long deltay = (long) (closest_point.Y() - iy + 0.5);
+                long deltax = (long) (closest_point.X() - ix + 0.5);
+
+                RNScalar normalized_distance = sqrt(resolution[RN_Z] * resolution[RN_Z] * deltaz * deltaz + resolution[RN_Y] * resolution[RN_Y] * deltay * deltay + resolution[RN_X] * resolution[RN_X] * deltax * deltax);
+                if (normalized_distance < buffer) continue;
+
+                if (distance < closest_distance) {
+                    closest_distance = distance;
+                    second_closest_point = R3Point(ix, iy, iz);
+                }
+            }
+
+            skeleton_endpoints.push_back((closest_point + second_closest_point) / 2);
+
+            printf("  No. endpoints: %ld\n", skeleton_endpoints.size());
+
+            break;
+        }
+
+        // CTRL + Z
+        case 26: {
+            if (not skeleton_endpoints.size()) break;
+            skeleton_endpoints.pop_back();
+            break;
+        }
+
+        case DELETE: {
+            R3Ray world_ray = viewer->WorldRay(x, y);
+
+            RNLength closest_distance = DBL_MAX;
+            unsigned long delete_index = 0;
+
+            for (unsigned long iv = 0; iv < skeleton_endpoints.size(); ++iv) {
+                R3Point location = skeleton_endpoints[iv];
+                location.Transform(transformation);
+
+                RNLength distance = R3Distance(world_ray, location);
+                if (distance < closest_distance) {
+                    closest_distance = distance;
+                    delete_index = iv;
+                }
+            }
+
+            skeleton_endpoints.erase(skeleton_endpoints.begin() + delete_index);
+
+            printf("  No. endpoints: %ld\n", skeleton_endpoints.size());
+
+            break;
+
+        }
+
         case ENTER: {
             background_color[0] = 1.0 - background_color[0];
             background_color[1] = 1.0 - background_color[1];
@@ -655,6 +753,8 @@ void GLUTKeyboard(unsigned char key, int x, int y)
         }
 
         case ESCAPE: {
+            WriteSkeletonEndpoints();
+
             GLUTStop();
             break;
         }

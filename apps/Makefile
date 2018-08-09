@@ -26,6 +26,7 @@ target:
 	cd nuclearview; $(MAKE) $(TARGET)
 	cd overlay; $(MAKE) $(TARGET)
 	cd segmentlists; $(MAKE) $(TARGET)
+	cd skeletonbenchmark; $(MAKE) $(TARGET)
 	cd skeletonview; $(MAKE) $(TARGET)
 	cd skeletonvisualizer; $(MAKE) $(TARGET)
 	cd skelmulticut; $(MAKE) $(TARGET)
