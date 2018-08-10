@@ -196,9 +196,13 @@ ReadSkeletons(void)
     sprintf(input_filename, "skeletons/%s/topological-%ldx%ldx%ld-thinning-skeleton.pts", prefix, downsample_ratio[RN_X], downsample_ratio[RN_Z], downsample_ratio[RN_Z]);
     
     FILE *fp = fopen(input_filename, "rb");
-    long skeleton_maximum_segmentation;
+    long skeleton_maximum_segmentation, input_zres, input_yres, input_xres;
     if (fp) {
+        if (fread(&input_zres, sizeof(long), 1, fp) != 1) return 0;
+        if (fread(&input_yres, sizeof(long), 1, fp) != 1) return 0;
+        if (fread(&input_xres, sizeof(long), 1, fp) != 1) return 0;
         if (fread(&skeleton_maximum_segmentation, sizeof(long), 1, fp) != 1) return 0;
+        assert (input_zres == grid_size[RN_Z] and input_yres == grid_size[RN_Y] and input_xres == grid_size[RN_X]);
         assert (skeleton_maximum_segmentation == maximum_segmentation);
 
         thinning_skeletons = new std::vector<long>[maximum_segmentation];
@@ -220,7 +224,11 @@ ReadSkeletons(void)
     sprintf(input_filename, "skeletons/%s/topological-%ldx%ldx%ld-medial-axis-skeleton.pts", prefix, downsample_ratio[RN_X], downsample_ratio[RN_Y], downsample_ratio[RN_Z]);
     fp = fopen(input_filename, "rb");
     if (fp) {
+        if (fread(&input_zres, sizeof(long), 1, fp) != 1) return 0;
+        if (fread(&input_yres, sizeof(long), 1, fp) != 1) return 0;
+        if (fread(&input_xres, sizeof(long), 1, fp) != 1) return 0;
         if (fread(&skeleton_maximum_segmentation, sizeof(long), 1, fp) != 1) return 0;
+        assert (input_zres == grid_size[RN_Z] and input_yres == grid_size[RN_Y] and input_xres == grid_size[RN_X]);
         assert (skeleton_maximum_segmentation == maximum_segmentation);
 
         medial_skeletons = new std::vector<long>[maximum_segmentation];
@@ -241,7 +249,11 @@ ReadSkeletons(void)
     sprintf(input_filename, "skeletons/%s/topological-%ldx%ldx%ld-teaser-skeleton.pts", prefix, downsample_ratio[RN_X], downsample_ratio[RN_Y], downsample_ratio[RN_Z]);
     fp = fopen(input_filename, "rb");
     if (fp) {
+        if (fread(&input_zres, sizeof(long), 1, fp) != 1) return 0;
+        if (fread(&input_yres, sizeof(long), 1, fp) != 1) return 0;
+        if (fread(&input_xres, sizeof(long), 1, fp) != 1) return 0;
         if (fread(&skeleton_maximum_segmentation, sizeof(long), 1, fp) != 1) return 0;
+        assert (input_zres == grid_size[RN_Z] and input_yres == grid_size[RN_Y] and input_xres == grid_size[RN_X]);
         assert (skeleton_maximum_segmentation == maximum_segmentation);
 
         teaser_skeletons = new std::vector<long>[maximum_segmentation];

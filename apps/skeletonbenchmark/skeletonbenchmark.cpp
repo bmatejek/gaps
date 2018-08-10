@@ -127,7 +127,7 @@ ReadMetaData(const char *prefix)
 
     // get the meta data filename
     char meta_data_filename[4096];
-    sprintf(meta_data_filename, "meta_data/%s.meta", prefix);
+    sprintf(meta_data_filename, "meta/%s.meta", prefix);
 
     // open the file
     FILE *fp = fopen(meta_data_filename, "r");
@@ -249,7 +249,7 @@ static int ReadData(void)
 static int ReadLargestSegments(void)
 {
     char input_filename[4096];
-    sprintf(input_filename, "skeletons/benchmarks/%s-skeleton-benchmark-examples.bin", prefix);
+    sprintf(input_filename, "benchmarks/skeleton/%s-skeleton-benchmark-examples.bin", prefix);
 
     FILE *fp = fopen(input_filename, "rb");
     
@@ -897,7 +897,7 @@ int main(int argc, char** argv)
     if(!ParseArgs(argc, argv)) exit(-1);
 
     // get the output directory for the benchmark information
-    sprintf(output_directory, "skeletons/benchmarks/%s", prefix);
+    sprintf(output_directory, "benchmarks/skeleton/%s/", prefix);
 
     /////////////////////////////////
     //// Read in the voxel files ////
