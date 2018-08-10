@@ -649,7 +649,7 @@ void GLUTKeyboard(unsigned char key, int x, int y)
 
         case 'K':
         case 'k': {
-            skeleton_type = (++skeleton_type) % 3;
+            skeleton_type = (skeleton_type + 1) % 3;
             break;
         }
 
