@@ -379,6 +379,8 @@ static void Preprocessing(void)
 
 static void DrawSegment(int segment_index)
 {
+    transformation.Push();
+
     glBegin(GL_POINTS);
     for (unsigned int iv = 0; iv < segmentations[segment_index].size(); ++iv) {
         // faster rendering with downsampling
@@ -390,6 +392,8 @@ static void DrawSegment(int segment_index)
         glVertex3f(ix, iy, iz);
     }
     glEnd();
+
+    transformation.Pop();
 }
 
 
@@ -403,7 +407,13 @@ static void DrawSkeleton(int segment_index)
     else return;
     if (!skeletons) return;
 
-    glPointSize(3);
+    // sizes for skeleton joints
+    double joint_size = 3;
+    double endpoint_size = 60;
+
+    transformation.Push();
+
+    glPointSize(joint_size);
     glBegin(GL_POINTS);
     for (unsigned long is = 0; is < skeletons[segment_index].size(); ++is) {
         // get the coordinates from the linear index
@@ -416,8 +426,8 @@ static void DrawSkeleton(int segment_index)
     }
     glEnd();
 
-    glPointSize(10);
-    glBegin(GL_POINTS);
+    transformation.Pop();
+
     for (unsigned long is = 0; is < skeletons[segment_index].size(); ++is) {
         // get the coordinates from the linear index
         long iv = skeletons[segment_index][is];
@@ -426,9 +436,14 @@ static void DrawSkeleton(int segment_index)
         iv = -1 * iv;
         long ix, iy, iz;
         IndexToIndices(iv, ix, iy, iz);
-        glVertex3f(ix, iy, iz);
+        
+        // convert to world coordinates since transformation is popped
+        ix = resolution[RN_X] * ix;
+        iy = resolution[RN_Y] * iy;
+        iz = resolution[RN_Z] * iz;
+
+        R3Sphere(R3Point(ix, iy, iz), endpoint_size).Draw();
     }
-    glEnd();
 }
 
 
@@ -486,16 +501,12 @@ void GLUTRedraw(void)
         world_box.Outline();
     }
 
-    transformation.Push();
-
     // draw machine labels and skeletons
     glPointSize(1);
     RNLoadRgb(Color(segmentation_index));
     DrawSegment(segmentation_index);
     RNLoadRgb(RNRgb(1.0 - background_color[0], 1.0 - background_color[1], 1.0 - background_color[2]));
     DrawSkeleton(segmentation_index);
-
-    transformation.Pop();
 
     // epilogue
     glEnable(GL_LIGHTING);
@@ -578,19 +589,6 @@ void GLUTMouse(int button, int state, int x, int y)
 
 
 
-/*static void DecrementIndex(void)
-{
-    if (candidate_index) --candidate_index;
-}*/
-
-
-
-/*static void IncrementIndex(void)
-{
-    if (candidate_index < ncandidates - 1) ++candidate_index;
-}*/
-
-
 void GLUTSpecial(int key, int x, int y)
 {
     // invert y coordinate
@@ -646,6 +644,12 @@ void GLUTKeyboard(unsigned char key, int x, int y)
         case 'B':
         case 'b': {
             show_bbox = 1 - show_bbox;
+            break;
+        }
+
+        case 'K':
+        case 'k': {
+            skeleton_type = (++skeleton_type) % 3;
             break;
         }
 

@@ -48,7 +48,6 @@ static R3Box world_box = R3null_box;
 
 // display variables
 
-static int projection_dim = RN_Z;
 static double background_color[3] = { 0.0, 0.0, 0.0 };
 
 
@@ -481,24 +480,7 @@ void GLUTKeyboard(unsigned char key, int x, int y)
 
         case 'K':
         case 'k': {
-            skeleton_type = (++skeleton_type) % 4;
-        }
-
-        case 'X':
-        case 'x': {
-            projection_dim = RN_X;
-            break;
-        }
-
-        case 'Y':
-        case 'y': {
-            projection_dim = RN_Y;
-            break;
-        }
-
-        case 'Z':
-        case 'z': {
-            projection_dim = RN_Z;
+            skeleton_type = (++skeleton_type) % 3;
             break;
         }
 
