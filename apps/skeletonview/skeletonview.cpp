@@ -25,8 +25,6 @@
 // class declarations
 
 struct RNMeta;
-struct SWCEntry;
-struct MergeCandidate;
 
 
 
@@ -35,12 +33,6 @@ struct MergeCandidate;
 // I/O flags
 static int print_debug = 0;
 static int print_verbose = 0;
-// maximum distance in nanometers
-static int network_distance = 1200;
-static int maximum_distance = 210;
-static int endpoint_distance = 300;
-static int threshold = 20000;
-// dataset to examine
 static const char* prefix = NULL;
 
 
@@ -48,6 +40,7 @@ static const char* prefix = NULL;
 // program variables
 
 static RNScalar resolution[3] = { 6, 6, 30 };
+static long downsample_ratio[3] = { 100, 100, 100 };
 static int grid_size[3] = { -1, -1, -1 };
 static R3Affine transformation = R3null_affine;
 static R3Viewer *viewer = NULL;
@@ -58,23 +51,19 @@ static R3Box world_box = R3null_box;
 // voxel grids
 
 static R3Grid *rhoana_grid = NULL;
-static R3Grid *gold_grid = NULL;
 
 
 
 // skeleton variables
 
-static std::vector<long> *topological_joints = NULL;
-static std::vector<long> *topological_endpoints = NULL;
-static std::vector<SWCEntry> *neutu_skeletons = NULL;
+static std::vector<long> *thinning_skeletons = NULL;
+static std::vector<long> *medial_skeletons = NULL;
+static std::vector<long> *teaser_skeletons = NULL;
 
 
 
 // display variables
 
-//static int selected_slice_index = 0;
-//static int show_slice = 0;
-//static int projection_dim = RN_Z;
 static double background_color[3] = { 0.0, 0.0, 0.0 };
 
 
@@ -93,52 +82,15 @@ static int GLUTmodifiers = 0;
 // random access variables
 
 static std::vector<long> *segmentations = NULL;
-static std::vector<long> *golds = NULL;
 static long maximum_segmentation = -1;
-static long maximum_gold = -1;
-static long *segmentation_to_gold = NULL;
-static std::vector<long> *segmentations_per_gold = NULL;
-static std::vector<MergeCandidate> candidates;
-static std::vector<MergeCandidate> undetermined_candidates;
-
-
-
-
-
-
-//static std::map<unsigned long, unsigned long> label_to_index;
-//static unsigned long *index_to_label = NULL;
-//static std::vector<unsigned long> *segmentations = NULL;
-//static std::vector<R3Point> *skeleton_endpoints = NULL;
 
 
 
 // display variables
 
 static int show_bbox = 1;
-static int show_local_bbox = 0;
-static int show_split_errors = 0;
-static int show_skeleton = 1;
-static int show_undetermined = 0;
-//static int circular_index = 0;
-//static int circle_size = 14;
-//static int show_feature_box = 1;
-static int show_only_positives = 0;
-static int show_segmentation = 1;
 static int segmentation_index = 1;
-static int show_merge_candidates = 0;
-static int candidate_index = 0;
-static int undetermined_index = 0;
-static int show_gold = 0;
-static int gold_index = 1;
-static int show_slice = 0;
-static int selected_slice_index = 0;
-//static int show_legend = 1;
-//static int segmentation_index = 0;
-
-//static int show_segments = 1;
-//static int *final_labels = NULL;
-//static int show_output = 0;
+static int skeleton_type = 0;
 static RNScalar downsample_rate = 2.0;
 
 
@@ -177,7 +129,7 @@ ReadMetaData(const char *prefix)
 
     // get the meta data filename
     char meta_data_filename[4096];
-    sprintf(meta_data_filename, "meta_data/%s.meta", prefix);
+    sprintf(meta_data_filename, "meta/%s.meta", prefix);
 
     // open the file
     FILE *fp = fopen(meta_data_filename, "r");
@@ -200,7 +152,7 @@ ReadMetaData(const char *prefix)
 
     // read in gold information
     if (!fgets(comment, 4096, fp)) return 0;
-    if (fscanf(fp, "%s %s\n", meta_data.gold_filename, meta_data.gold_dataset) != 2) return 0;
+    if (!fgets(comment, 4096, fp)) return 0;
 
     // read image
     if (!fgets(comment, 4096, fp)) return 0;
@@ -208,7 +160,7 @@ ReadMetaData(const char *prefix)
 
     // skip mask
     if (!fgets(comment, 4096, fp)) return 0;
-    if (fscanf(fp, "%s %s\n", meta_data.mask_filename, meta_data.mask_dataset) != 2) return 0;
+    if (!fgets(comment, 4096, fp)) return 0;
 
     // read segmentation
     if (!fgets(comment, 4096, fp)) return 0;
@@ -237,140 +189,78 @@ ReadMetaData(const char *prefix)
 
 
 
-struct SWCEntry {
-    // constructors
-    SWCEntry(int sample_number, int structure_identifier, RNScalar x_position, RNScalar y_position, RNScalar z_position, RNScalar radius, int parent_sample) : 
-    sample_number(sample_number), 
-    structure_identifier(structure_identifier), 
-    x_position(x_position), 
-    y_position(y_position), 
-    z_position(z_position), 
-    radius(radius), 
-    parent_sample(parent_sample)
-    {
-    }
-
-    // access variables
-    RNScalar X(void) { return x_position; }
-    RNScalar Y(void) { return y_position; }
-    RNScalar Z(void) { return z_position; }
-    R3Point P(void) { return R3Point(x_position, y_position, z_position); }
-
-    // instance variables
-    int sample_number;
-    int structure_identifier;
-    RNScalar x_position;
-    RNScalar y_position;
-    RNScalar z_position;
-    RNScalar radius;
-    int parent_sample;
-};
-
-
-
-static int ReadSWCFile(int label)
+static int
+ReadSkeletons(void)
 {
     char input_filename[4096];
-    sprintf(input_filename, "skeletons/NeuTu/%s/tree_%d.swc", prefix, label);
+    sprintf(input_filename, "skeletons/%s/topological-%ldx%ldx%ld-thinning-skeleton.pts", prefix, downsample_ratio[RN_X], downsample_ratio[RN_Z], downsample_ratio[RN_Z]);
+    
+    FILE *fp = fopen(input_filename, "rb");
+    long skeleton_maximum_segmentation;
+    if (fp) {
+        if (fread(&skeleton_maximum_segmentation, sizeof(long), 1, fp) != 1) return 0;
+        assert (skeleton_maximum_segmentation == maximum_segmentation);
 
-    std::ifstream fd(input_filename);
-    if(!fd.is_open()) {
-        if (print_debug) fprintf(stderr, "Failed to read %s\n", input_filename);
-        return 0;
+        thinning_skeletons = new std::vector<long>[maximum_segmentation];
+        for (long iv = 0; iv < maximum_segmentation; ++iv) {
+            thinning_skeletons[iv] = std::vector<long>();
+
+            long nelements; 
+            if (fread(&nelements, sizeof(long), 1, fp) != 1) return 0;
+            for (long ie = 0; ie < nelements; ++ie) {
+                long element;
+                if (fread(&element, sizeof(long), 1, fp) != 1) return 0;
+
+                thinning_skeletons[iv].push_back(element);
+            }
+        }  
+        fclose(fp);
     }
 
-    std::string line;
-    bool first_iteration = TRUE;
-    while(std::getline(fd, line)) {
-        if(first_iteration) {
-            first_iteration = FALSE;
-            continue;
+    sprintf(input_filename, "skeletons/%s/topological-%ldx%ldx%ld-medial-axis-skeleton.pts", prefix, downsample_ratio[RN_X], downsample_ratio[RN_Y], downsample_ratio[RN_Z]);
+    fp = fopen(input_filename, "rb");
+    if (fp) {
+        if (fread(&skeleton_maximum_segmentation, sizeof(long), 1, fp) != 1) return 0;
+        assert (skeleton_maximum_segmentation == maximum_segmentation);
+
+        medial_skeletons = new std::vector<long>[maximum_segmentation];
+        for (long iv = 0; iv < maximum_segmentation; ++iv) {
+            medial_skeletons[iv] = std::vector<long>();
+
+            long nelements;
+            if (fread(&nelements, sizeof(long), 1, fp) != 1) return 0;
+            for (long ie = 0; ie < nelements; ++ie) {
+                long element;
+                if (fread(&element, sizeof(long), 1, fp) != 1) return 0;
+                medial_skeletons[iv].push_back(element);
+            }
         }
-
-        int sample_number, structure_identifier, parent_sample;
-        RNScalar x_position, y_position, z_position, radius;
-        sscanf(line.c_str(), "%d %d %lf %lf %lf %lf %d", &sample_number, &structure_identifier, &x_position,
-            &y_position, &z_position, &radius, &parent_sample);
-
-        neutu_skeletons[label].push_back(SWCEntry(sample_number, structure_identifier, x_position, y_position, z_position, radius, parent_sample));
+        fclose(fp);
     }
 
-    fd.close();
+    sprintf(input_filename, "skeletons/%s/topological-%ldx%ldx%ld-teaser-skeleton.pts", prefix, downsample_ratio[RN_X], downsample_ratio[RN_Y], downsample_ratio[RN_Z]);
+    fp = fopen(input_filename, "rb");
+    if (fp) {
+        if (fread(&skeleton_maximum_segmentation, sizeof(long), 1, fp) != 1) return 0;
+        assert (skeleton_maximum_segmentation == maximum_segmentation);
+
+        teaser_skeletons = new std::vector<long>[maximum_segmentation];
+        for (long iv = 0; iv < maximum_segmentation; ++iv) {
+            teaser_skeletons[iv] = std::vector<long>();
+
+            long nelements;
+            if (fread(&nelements, sizeof(long), 1, fp) != 1) return 0;
+            for (long ie = 0; ie < nelements; ++ie) {
+                long element;
+                if (fread(&element, sizeof(long), 1, fp) != 1) return 0;
+                teaser_skeletons[iv].push_back(element);
+            }
+        }
+        fclose(fp);
+    }
 
     // return success
     return 1;
-}
-
-
-
-struct MergeCandidate {
-    // constructors
-    MergeCandidate(void) :
-        label_one(0),
-        label_two(0),
-        x(0),
-        y(0),
-        z(0),
-        ground_truth(FALSE)
-    {
-    }
-
-    MergeCandidate(long label_one, long label_two, long x, long y, long z, bool ground_truth) :
-        label_one(label_one),
-        label_two(label_two),
-        x(x),
-        y(y),
-        z(z),
-        ground_truth(ground_truth)
-    {
-    }
-
-    // access variables
-    long LabelOne(void) { return label_one; }
-    long LabelTwo(void) { return label_two; }
-    long X(void) { return x; }
-    long Y(void) { return y; }
-    long Z(void) { return z; }
-    bool GroundTruth(void) { return ground_truth; }
-
-    // instance variables
-    long label_one;   
-    long label_two;
-    long x;
-    long y;
-    long z;
-    bool ground_truth;
-};
-
-
-
-static void ReadTopologicalSkeleton(int label)
-{
-    if (label > 5000) return;
-
-    char input_filename[4096];
-    sprintf(input_filename, "skeletons/topological-thinning/%s/skeleton-%d.pts", prefix, label);
-
-    FILE *fp = fopen(input_filename, "rb");
-    if (!fp) return;
-
-    // read the number of labels
-    long npts;
-    if (fread(&npts, sizeof(long), 1, fp) != 1) return;
-
-    for (long pt = 0; pt < npts; ++pt) {
-        long index;
-        if (fread(&index, sizeof(long), 1, fp) != 1) return;
-
-        if (index < 0) {
-            index = -1 * index;
-            topological_joints[label].push_back(index);
-            topological_endpoints[label].push_back(index);
-        }
-        else topological_joints[label].push_back(index);
-    }
-
-    fclose(fp);
 }
 
 
@@ -389,9 +279,8 @@ static int ReadData(void)
     grid_size[RN_Y] = rhoana_grid->YResolution();
     grid_size[RN_Z] = rhoana_grid->ZResolution();
 
-    R3Grid **gold_grids = RNReadH5File(meta_data.gold_filename, meta_data.gold_dataset);
-    gold_grid = gold_grids[0];
-    delete[] gold_grids;
+    // get the maximum values for each grid
+    maximum_segmentation = (long) (rhoana_grid->Maximum() + 0.5) + 1;
 
     // print statistics
     if(print_verbose) {
@@ -407,141 +296,11 @@ static int ReadData(void)
 
 
 
-static int ReadMergeCandidates(void)
-{
-    // start statistics
-    RNTime start_time;
-    start_time.Read();
-
-    // create an empty vector
-    candidates = std::vector<MergeCandidate>();
-    
-    // get the candidate filename
-    char positive_filename[4096];
-    sprintf(positive_filename, "features/skeleton/%s-%d-%dnm-%dnm-%dnm-positive.candidates", prefix, threshold, maximum_distance, endpoint_distance, network_distance);
-    
-    // open the file
-    FILE *positive_fp = fopen(positive_filename, "rb");
-    if (!positive_fp) { fprintf(stderr, "Failed to read %s\n", positive_filename); return 0; }
-
-    int npositive_candidates;
-    if (fread(&npositive_candidates, sizeof(int), 1, positive_fp) != 1) return 0;
-
-    // read in all of the candidates
-    for (int iv = 0; iv < npositive_candidates; ++iv) {
-        long label_one;
-        long label_two;
-        long x;
-        long y;
-        long z;
-        bool ground_truth;
-
-        // read all of the data for this candidate
-        if (fread(&label_one, sizeof(long), 1, positive_fp) != 1) return 0;
-        if (fread(&label_two, sizeof(long), 1, positive_fp) != 1) return 0;
-        if (fread(&z, sizeof(long), 1, positive_fp) != 1) return 0;
-        if (fread(&y, sizeof(long), 1, positive_fp) != 1) return 0;
-        if (fread(&x, sizeof(long), 1, positive_fp) != 1) return 0;
-        if (fread(&ground_truth, sizeof(bool), 1, positive_fp) != 1) return 0;
-
-        candidates.push_back(MergeCandidate(label_one, label_two, x, y, z, ground_truth));
-    }
-
-    // close the file
-    fclose(positive_fp);
-
-    // get the candidate filename
-    char negative_filename[4096];
-    sprintf(negative_filename, "features/skeleton/%s-%d-%dnm-%dnm-%dnm-negative.candidates", prefix, threshold, maximum_distance, endpoint_distance, network_distance);
-    
-    // open the file
-    FILE *negative_fp = fopen(negative_filename, "rb");
-    if (!negative_fp) { fprintf(stderr, "Failed to read %s\n", negative_filename); return 0; }
-
-    int nnegative_candidates;
-    if (fread(&nnegative_candidates, sizeof(int), 1, negative_fp) != 1) return 0;
-
-    // read in all of the candidates
-    for (int iv = 0; iv < nnegative_candidates; ++iv) {
-        long label_one;
-        long label_two;
-        long x;
-        long y;
-        long z;
-        bool ground_truth;
-
-        // read all of the data for this candidate
-        if (fread(&label_one, sizeof(long), 1, negative_fp) != 1) return 0;
-        if (fread(&label_two, sizeof(long), 1, negative_fp) != 1) return 0;
-        if (fread(&z, sizeof(long), 1, negative_fp) != 1) return 0;
-        if (fread(&y, sizeof(long), 1, negative_fp) != 1) return 0;
-        if (fread(&x, sizeof(long), 1, negative_fp) != 1) return 0;
-        if (fread(&ground_truth, sizeof(bool), 1, negative_fp) != 1) return 0;
-
-        candidates.push_back(MergeCandidate(label_one, label_two, x, y, z, ground_truth));
-    }
-
-    // close the file
-    fclose(negative_fp);
-
-    std::random_shuffle(candidates.begin(), candidates.end());
-
-    undetermined_candidates = std::vector<MergeCandidate>();
-
-    // get the candidate filename
-    char undetermined_filename[4096];
-    sprintf(undetermined_filename, "features/skeleton/%s-%d-%dnm-%dnm-%dnm-undetermined.candidates", prefix, threshold, maximum_distance, endpoint_distance, network_distance);
-    
-    // open the file
-    FILE *undetermined_fp = fopen(undetermined_filename, "rb");
-    if (!undetermined_fp) { fprintf(stderr, "Failed to read %s\n", undetermined_filename); return 0; }
-
-    int nundetermined_candidates;
-    if (fread(&nundetermined_candidates, sizeof(int), 1, undetermined_fp) != 1) return 0;
-
-    // read in all of the candidates
-    for (int iv = 0; iv < nundetermined_candidates; ++iv) {
-        long label_one;
-        long label_two;
-        long x;
-        long y;
-        long z;
-        bool ground_truth;
-
-        // read all of the data for this candidate
-        if (fread(&label_one, sizeof(long), 1, undetermined_fp) != 1) return 0;
-        if (fread(&label_two, sizeof(long), 1, undetermined_fp) != 1) return 0;
-        if (fread(&z, sizeof(long), 1, undetermined_fp) != 1) return 0;
-        if (fread(&y, sizeof(long), 1, undetermined_fp) != 1) return 0;
-        if (fread(&x, sizeof(long), 1, undetermined_fp) != 1) return 0;
-        if (fread(&ground_truth, sizeof(bool), 1, undetermined_fp) != 1) return 0;
-
-        undetermined_candidates.push_back(MergeCandidate(label_one, label_two, x, y, z, ground_truth));
-    }
-
-    // close the file
-    fclose(undetermined_fp);
-
-
-    // print statistics
-    if (print_verbose) {
-        printf("Read candidates for %s-%d-%dnm-%dnm-%dnm in %0.2f seconds\n", prefix, threshold, maximum_distance, endpoint_distance, network_distance, start_time.Elapsed());
-        printf(" Positive Candidates: %d\n", npositive_candidates);
-        printf(" Negative Candidates: %d\n", nnegative_candidates);
-        printf(" Undtermined Candidates: %d\n", nundetermined_candidates);
-    }
-
-    // return success
-    return 1;
-}
-
-
-
 ////////////////////////////////////////////////////////////////////////
 // Helper functions
 ////////////////////////////////////////////////////////////////////////
 
-static void IndexToIndices(int index, int& ix, int& iy, int& iz)
+static void IndexToIndices(long index, long& ix, long& iy, long& iz)
 {
   // Set indices of grid value at index
   iz = index / (grid_size[RN_X] * grid_size[RN_Y]);
@@ -578,21 +337,10 @@ static void Preprocessing(void)
     RNTime start_time;
     start_time.Read();
 
-    // constants for segmentation to gold mapping
-    static const RNScalar low_threshold = 0.1;
-    static const RNScalar high_threshold = 0.8;
-
-    // get the maximum values for each grid
-    maximum_segmentation = (long) (rhoana_grid->Maximum() + 0.5) + 1;
-    maximum_gold = (long) (gold_grid->Maximum() + 0.5) + 1;
-
     // create a vector for each valid ID
     segmentations = new std::vector<long>[maximum_segmentation];
     for (long iv = 0; iv < maximum_segmentation; ++iv)
         segmentations[iv] = std::vector<long>();
-    golds = new std::vector<long>[maximum_gold];
-    for (long iv = 0; iv < maximum_gold; ++iv) 
-        golds[iv] = std::vector<long>();
 
     // go through all voxels to see if it belongs to the boundary
     for (int iz = 1; iz < grid_size[RN_Z] - 1; ++iz) {
@@ -601,7 +349,6 @@ static void Preprocessing(void)
                 long iv = IndicesToIndex(ix, iy, iz);
 
                 long segment = (long) (rhoana_grid->GridValue(ix, iy, iz) + 0.5);
-                long gold = (long) (gold_grid->GridValue(ix, iy, iz) + 0.5);
 
                 // go through all six adjacent neighbors
                 if ((long)(rhoana_grid->GridValue(ix - 1, iy, iz) + 0.5) != segment ||
@@ -613,97 +360,14 @@ static void Preprocessing(void)
                 {
                     segmentations[segment].push_back(iv);
                 }
-                if ((long)(gold_grid->GridValue(ix - 1, iy, iz) + 0.5) != gold ||
-                    (long)(gold_grid->GridValue(ix + 1, iy, iz) + 0.5) != gold ||
-                    (long)(gold_grid->GridValue(ix, iy - 1, iz) + 0.5) != gold ||
-                    (long)(gold_grid->GridValue(ix, iy + 1, iz) + 0.5) != gold ||
-                    (long)(gold_grid->GridValue(ix, iy, iz - 1) + 0.5) != gold ||
-                    (long)(gold_grid->GridValue(ix, iy, iz + 1) + 0.5) != gold)
-                {
-                    golds[gold].push_back(iv);
-                }
             }
         }
     }
-
-    // create a mapping from segmentation values to gold values
-    long *nvoxels_per_segment = new long[maximum_segmentation];
-    for (long iv = 0; iv < maximum_segmentation; ++iv)
-        nvoxels_per_segment[iv] = 0;
-    long **seg2gold_overlap = new long *[maximum_segmentation];
-    for (long is = 0; is < maximum_segmentation; ++is) {
-        seg2gold_overlap[is] = new long[maximum_gold];
-        for (long ig = 0; ig < maximum_gold; ++ig) {
-            seg2gold_overlap[is][ig] = 0;
-        }
-    }
-
-    // iterate over every voxel
-    for (long iv = 0; iv < rhoana_grid->NEntries(); ++iv) {
-        long segment = (long) (rhoana_grid->GridValue(iv) + 0.5);
-        long gold = (long) (gold_grid->GridValue(iv) + 0.5);
-        nvoxels_per_segment[segment]++;
-        seg2gold_overlap[segment][gold]++;
-    }
-
-    segmentation_to_gold = new long[maximum_segmentation];
-    for (long is = 1; is < maximum_segmentation; ++is) {
-        long gold_id = 0;
-        long gold_max_value = 0;
-
-        // only gets label of 0 if the number of non zero voxels is below threshold
-        for (long ig = 1; ig < maximum_gold; ++ig) {
-            if (seg2gold_overlap[is][ig] > gold_max_value) {
-                gold_max_value = seg2gold_overlap[is][ig];
-                gold_id = ig;
-            }
-        }
-
-        // the number of non zero pixels must be greater than low threshold
-        if (gold_max_value / (double)nvoxels_per_segment[is] < low_threshold) segmentation_to_gold[is] = 0;
-        else if (gold_max_value / (double)(nvoxels_per_segment[is] - seg2gold_overlap[is][0]) > high_threshold) segmentation_to_gold[is] = gold_id;
-        else segmentation_to_gold[is] = 0;
-    }
-
-    // create a cache of segmentations for every gold label
-    segmentations_per_gold = new std::vector<long>[maximum_gold];
-    for (long ig = 0; ig < maximum_gold; ++ig) 
-        segmentations_per_gold[ig] = std::vector<long>();
-    for (long is = 1; is < maximum_segmentation; ++is) {
-        long gold_index = segmentation_to_gold[is];
-        segmentations_per_gold[gold_index].push_back(is);
-    }
-
-    // create arrays for topological skeletons
-    topological_joints = new std::vector<long>[maximum_segmentation];
-    topological_endpoints = new std::vector<long>[maximum_segmentation];
-    neutu_skeletons = new std::vector<SWCEntry>[maximum_segmentation];
-    for (long iv = 0; iv < maximum_segmentation; ++iv) {
-        topological_joints[iv] = std::vector<long>();
-        topological_endpoints[iv] = std::vector<long>();
-        neutu_skeletons[iv] = std::vector<SWCEntry>();
-    }
-
-    // read all of the topological skeletons
-    for (long iv = 0; iv < maximum_segmentation; ++iv) {
-        ReadSWCFile(iv);
-        ReadTopologicalSkeleton(iv);
-    }
-
-    // free memory
-    for (long is = 0; is < maximum_segmentation; ++is) 
-        delete[] seg2gold_overlap[is];
-    delete[] seg2gold_overlap;
-    delete[] nvoxels_per_segment;
-
-    // read all of the merge candidates
-    if (!ReadMergeCandidates()) exit(-1);
 
     if (print_verbose) {
         printf("Preprocessing...\n");
         printf("  Time = %0.2f seconds\n", start_time.Elapsed());
         printf("  Maximum Segment = %ld\n", maximum_segmentation);
-        printf("  Maximum Gold = %ld\n", maximum_gold);
     }
 }
 
@@ -713,53 +377,6 @@ static void Preprocessing(void)
 // Drawing utility functions
 ////////////////////////////////////////////////////////////////////////
 
-static void DrawNeuTuSkeleton(int segment_index)
-{
-    RNRgb contrast_color = RNRgb(1.0 - background_color[0], 1.0 - background_color[1], 1.0 - background_color[2]);
-    RNLoadRgb(contrast_color);
-
-    glLineWidth(5.0);
-    glBegin(GL_LINES);
-    // go through all of the entries
-    for(unsigned int ie = 0; ie < neutu_skeletons[segment_index].size(); ++ie) {
-        SWCEntry entry = neutu_skeletons[segment_index][ie];
-        if(entry.parent_sample == -1) continue;
-        SWCEntry parent = neutu_skeletons[segment_index][entry.parent_sample - 1];
-        rn_assertion(parent.sample_number == entry.parent_sample);
-
-        // draw the line
-        glVertex3f(entry.X(), entry.Y(), entry.Z());
-        glVertex3f(parent.X(), parent.Y(), parent.Z());
-    }
-    glEnd();
-    glLineWidth(1.0);
-}
-
-
-
-static void DrawToplogicalSkeleton(int segment_index)
-{
-    RNRgb contrast_color = RNRgb(1.0 - background_color[0], 1.0 - background_color[1], 1.0 - background_color[2]);
-    RNLoadRgb(contrast_color);
-
-    glPointSize(2.0);
-    glBegin(GL_POINTS);
-    // go through all points along the skeleton
-    for (unsigned int iv = 0; iv < topological_joints[segment_index].size(); ++iv) {
-        long index = topological_joints[segment_index][iv];
-
-        // get the cartesian coordinates
-        int ix, iy, iz;
-        IndexToIndices(index, ix, iy, iz);
-
-        // draw the veretx
-        glVertex3f(ix, iy, iz);
-    }
-    glEnd();
-}
-
-
-
 static void DrawSegment(int segment_index)
 {
     glBegin(GL_POINTS);
@@ -768,154 +385,52 @@ static void DrawSegment(int segment_index)
         if (RNRandomScalar() > 1.0 / downsample_rate) continue;
 
         // get the coordinates from the linear index
-        int ix, iy, iz;
+        long ix, iy, iz;
         IndexToIndices(segmentations[segment_index][iv], ix, iy, iz);
         glVertex3f(ix, iy, iz);
     }
     glEnd();
-
-    if (show_skeleton == 1) DrawToplogicalSkeleton(segment_index);
-    if (show_skeleton == 2) DrawNeuTuSkeleton(segment_index);
 }
 
 
 
-static void DrawGold(int gold_index)
+static void DrawSkeleton(int segment_index)
 {
-    glBegin(GL_POINTS);
-    for (unsigned int iv = 0; iv < golds[gold_index].size(); ++iv) {
-        // faster rendering with downsampling
-        if (RNRandomScalar() > 1.0 / downsample_rate) continue;
+    std::vector<long> *skeletons;
+    if (skeleton_type == 0) skeletons = thinning_skeletons;
+    else if (skeleton_type == 1) skeletons = medial_skeletons;
+    else if (skeleton_type == 2) skeletons = teaser_skeletons;
+    else return;
+    if (!skeletons) return;
 
+    glPointSize(3);
+    glBegin(GL_POINTS);
+    for (unsigned long is = 0; is < skeletons[segment_index].size(); ++is) {
         // get the coordinates from the linear index
-        int ix, iy, iz;
-        IndexToIndices(golds[gold_index][iv], ix, iy, iz);
+        long iv = skeletons[segment_index][is];
+        bool endpoint = (iv < 0);
+        if (endpoint) continue;
+        long ix, iy, iz;
+        IndexToIndices(iv, ix, iy, iz);
         glVertex3f(ix, iy, iz);
     }
+    glEnd();
+
+    glPointSize(10);
+    glBegin(GL_POINTS);
+    for (unsigned long is = 0; is < skeletons[segment_index].size(); ++is) {
+        // get the coordinates from the linear index
+        long iv = skeletons[segment_index][is];
+        bool endpoint = (iv < 0);
+        if (!endpoint) continue;
+        iv = -1 * iv;
+        long ix, iy, iz;
+        IndexToIndices(iv, ix, iy, iz);
+        glVertex3f(ix, iy, iz);
+    }
+    glEnd();
 }
 
-
-
-static void DrawPointClouds(void)
-{
-    // push the transformation
-    transformation.Push();
-
-    if (show_undetermined and show_segmentation) {
-        MergeCandidate candidate = undetermined_candidates[undetermined_index];
-
-        RNLoadRgb(RNyellow_rgb);
-        DrawSegment(candidate.LabelOne());
-        RNLoadRgb(RNblue_rgb);
-        DrawSegment(candidate.LabelTwo());
-
-        RNRgb contrast_color = RNRgb(1.0 - background_color[0], 1.0 - background_color[1], 1.0 - background_color[2]);
-        RNLoadRgb(contrast_color);
-    
-        R3Box candidate_box = R3Box(candidate.X() - network_distance / resolution[RN_X],
-            candidate.Y() - network_distance / resolution[RN_Y], 
-            candidate.Z() - network_distance / resolution[RN_Z],
-            candidate.X() + network_distance / resolution[RN_X], 
-            candidate.Y() + network_distance / resolution[RN_Y], 
-            candidate.Z() + network_distance / resolution[RN_Z]);
-        candidate_box.Outline();
-    }
-    else if (show_merge_candidates and show_segmentation) {
-        MergeCandidate candidate = candidates[candidate_index];
-
-        if (candidate.ground_truth) RNLoadRgb(RNgreen_rgb);
-        else RNLoadRgb(RNred_rgb);
-        DrawSegment(candidate.LabelOne());
-        if (candidate.ground_truth) RNLoadRgb(RNblue_rgb);
-        else RNLoadRgb(RNyellow_rgb);
-        DrawSegment(candidate.LabelTwo());
-
-        RNRgb contrast_color = RNRgb(1.0 - background_color[0], 1.0 - background_color[1], 1.0 - background_color[2]);
-        RNLoadRgb(contrast_color);
-
-        if (show_local_bbox) {
-            R3Box candidate_box = R3Box(candidate.X() - network_distance / resolution[RN_X],
-                candidate.Y() - network_distance / resolution[RN_Y], 
-                candidate.Z() - network_distance / resolution[RN_Z],
-                candidate.X() + network_distance / resolution[RN_X], 
-                candidate.Y() + network_distance / resolution[RN_Y], 
-                candidate.Z() + network_distance / resolution[RN_Z]);
-            candidate_box.Outline();
-        }
-    }
-    else if (show_segmentation) {
-        RNLoadRgb(Color(segmentation_index));
-        DrawSegment(segmentation_index);
-
-        // show the neighbors with which it should merge
-        long gold_index = segmentation_to_gold[segmentation_index];
-        printf("Labels: %d", segmentation_index);
-        if (show_split_errors && gold_index) {
-            for (unsigned int is = 0; is < segmentations_per_gold[gold_index].size(); ++is) {
-                long neighbor_segment_index = segmentations_per_gold[gold_index][is];
-                if (segmentation_index == neighbor_segment_index) continue;
-                RNLoadRgb(Color(maximum_segmentation - segmentation_index));
-                DrawSegment(neighbor_segment_index);
-                printf(" %d", neighbor_segment_index);
-            }
-        }
-        printf("\n");
-    }
-
-    if (show_gold) {
-        RNLoadRgb(Color(gold_index));
-        DrawGold(gold_index);
-    }
-
-    // pop the transformation
-    transformation.Pop();
-}
-
-
-
-/*static void GLUTDrawText(const R2Point& position, const char *s)
-{
-   // draw text string s at position
-   glRasterPos2d(position[0], position[1]);
-   while (*s) glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, *(s++));
-}*/
-
-
-
-/*// Draw a legend in the lower-left corner
-static void DrawLegend(void)
-{
-   // set projection matrix
-   glMatrixMode(GL_PROJECTION);
-   glPushMatrix();
-   glLoadIdentity();
-   gluOrtho2D(0, GLUTwindow_width, 0, GLUTwindow_height);
-
-   // set model view matrix
-   glMatrixMode(GL_MODELVIEW);
-   glPushMatrix();
-   glLoadIdentity();
-
-
-   char legend[4096];
-
-   if (show_merge_candidate) {     
-       // show merge candidate information
-       MergeCandidate candidate = candidates[candidate_index];
-       sprintf(legend, "Candidate index: %u, Label One: %lu (blue/red), Label Two: %lu (green/yellow)", candidate_index, candidate.LabelOne(), candidate.LabelTwo());
-       GLUTDrawText(R2Point(10, 50), legend);
-       sprintf(legend,  "Index One: %lu, Index Two: %lu", label_to_index[candidate.LabelOne()], label_to_index[candidate.LabelTwo()]);
-       GLUTDrawText(R2Point(10, 30), legend);
-
-       // show control sequence 
-       GLUTDrawText(R2Point(10, 10), "C - show single neurons");      
-   } 
-   else {
-        sprintf(legend, "Segment %lu\n", index_to_label[segmentation_index]);
-       GLUTDrawText(R2Point(10, 30), legend);
-       GLUTDrawText(R2Point(10, 10), "C - show merge candidates"); 
-   }
-}*/
 
 
 ////////////////////////////////////////////////////////////////////////
@@ -932,7 +447,6 @@ void GLUTStop(void)
     start_time.Read();
 
     if (rhoana_grid) delete rhoana_grid;
-    if (gold_grid) delete gold_grid;
 
     // print statistics
     if(print_verbose) {
@@ -972,32 +486,19 @@ void GLUTRedraw(void)
         world_box.Outline();
     }
 
-    // draw machine labels and skeletons
-    DrawPointClouds();
+    transformation.Push();
 
-    /*if(show_legend){
-        DrawLegend();
-    }*/
+    // draw machine labels and skeletons
+    glPointSize(1);
+    RNLoadRgb(Color(segmentation_index));
+    DrawSegment(segmentation_index);
+    RNLoadRgb(RNRgb(1.0 - background_color[0], 1.0 - background_color[1], 1.0 - background_color[2]));
+    DrawSkeleton(segmentation_index);
+
+    transformation.Pop();
 
     // epilogue
     glEnable(GL_LIGHTING);
-
-    transformation.Push();
-    if (show_slice == 1) rhoana_grid->DrawColorSlice(RN_Z, selected_slice_index);
-    if (show_slice == 2) gold_grid->DrawColorSlice(RN_Z, selected_slice_index);
-    transformation.Pop();
-
-
-    // write the title
-    /*char title[4096];
-    if (show_merge_candidate) {
-        sprintf(title, "Skeleton Visualizer (Merge Candidates, %s) - %d\n", prefix, candidate_index);    
-    }
-    else {
-        sprintf(title, "Skeleton Visualizer (Single Neurons, %s) - %lu\n", prefix, index_to_label[segmentation_index]);
-    }    
-    glutSetWindowTitle(title);*/
-
 
     // swap buffers
     glutSwapBuffers();
@@ -1103,105 +604,22 @@ void GLUTSpecial(int key, int x, int y)
     GLUTmodifiers = glutGetModifiers();
 
     switch(key) {
-        case GLUT_KEY_UP: {
-            selected_slice_index += 1;
-            if (selected_slice_index >= grid_size[RN_Z])
-                selected_slice_index = grid_size[RN_Z] - 1;
-            break;
-        }
-
-        case GLUT_KEY_DOWN: {
-            selected_slice_index -= 1;
-            if (selected_slice_index < 0)
-                selected_slice_index = 0;
-            break;
-        }
-
         case GLUT_KEY_LEFT: {
-            if (GLUTmodifiers & GLUT_ACTIVE_SHIFT) {
-                --gold_index;
-                if (gold_index < 0) 
-                    gold_index = 0;
-            }
-            else {
-                if (show_undetermined) {
-                    --undetermined_index;
-                    if (undetermined_index < 0)
-                        undetermined_index = 0;
-                }
-                else if (show_merge_candidates) {
-                    do {
-                        --candidate_index;
-                        if (candidate_index < 0)
-                            candidate_index = 0;    
-                    } while (show_only_positives and not candidates[candidate_index].ground_truth and candidate_index != 0);
+            --segmentation_index;
+            if (segmentation_index < 0)
+                segmentation_index = 0;
 
-                    printf("Labels: %ld %ld\n", candidates[candidate_index].label_one, candidates[candidate_index].label_two);
-                }
-                else {
-                    --segmentation_index;
-                    if (segmentation_index < 0)
-                        segmentation_index = 0;
-
-                    printf("Label: %d\n", segmentation_index);
-                }
-                break;
-            }
-                
-/*            if (!show_merge_candidate) {
-                segmentation_index--;
-                if(segmentation_index < 0) segmentation_index = 0;
-            }
-            else {
-                DecrementIndex();
-                while (show_only_positives && candidate_index && !candidates[candidate_index].ground_truth)
-                    DecrementIndex();
-            }
-            break;*/
+            printf("Label: %d\n", segmentation_index);
+            break;
         }
 
         case GLUT_KEY_RIGHT: {
-            if (GLUTmodifiers & GLUT_ACTIVE_SHIFT) {
-                ++gold_index;
-                if (gold_index >= maximum_gold)
-                    gold_index = maximum_gold - 1;
-            }
-            else {
-                if (show_undetermined) {
-                    ++undetermined_index;
-                    if (undetermined_index >= (long)undetermined_candidates.size())
-                        undetermined_index = undetermined_candidates.size() - 1;
-                }
-                else if (show_merge_candidates) {
-                    do {
-                        ++candidate_index;
-                        if (candidate_index >= (long)candidates.size())
-                            candidate_index = candidates.size() - 1;
-                    } while (show_only_positives and not candidates[candidate_index].ground_truth and candidate_index != (long) candidates.size() - 1);
+            ++segmentation_index;
+            if (segmentation_index >= maximum_segmentation)
+                segmentation_index = maximum_segmentation - 1;
 
-                    printf("Labels: %ld %ld\n", candidates[candidate_index].label_one, candidates[candidate_index].label_two);
-                }
-                else {
-                    ++segmentation_index;
-                    if (segmentation_index >= maximum_segmentation)
-                        segmentation_index = maximum_segmentation - 1;
-
-                    printf("Label: %d\n", segmentation_index);
-                }
-                break;    
-            }
-            
-/*            if (!show_merge_candidate) {
-                segmentation_index++;
-                if(segmentation_index >= (int)label_to_index.size())
-                    segmentation_index = label_to_index.size() - 1;
-            }
-            else {
-                IncrementIndex();
-                while (show_only_positives && candidate_index < ncandidates - 1 && !candidates[candidate_index].ground_truth)
-                    IncrementIndex();
-            }
-            break;*/
+            printf("Label: %d\n", segmentation_index);
+            break;    
         }
     }
 
@@ -1225,75 +643,9 @@ void GLUTKeyboard(unsigned char key, int x, int y)
 
     // keys regardless of projection status
     switch(key) {
-        case 'A':
-        case 'a': {
-            show_local_bbox = 1 - show_local_bbox;
-            break;
-        }
-
         case 'B':
         case 'b': {
             show_bbox = 1 - show_bbox;
-            break;
-        }
-
-        case 'C':
-        case 'c': {
-            show_merge_candidates = 1 - show_merge_candidates;
-            break;
-        }
-
-        case 'E':
-        case 'e': {
-            show_split_errors = 1 - show_split_errors;
-            break;
-        }
-
-        case 'G':
-        case 'g': {
-            show_gold = 1 - show_gold;
-            break;
-        }
-
-        case 'K': 
-        case 'k': {
-            show_skeleton = (show_skeleton + 1) % 3;
-            break;
-        }
-
-        case 'P':
-        case 'p': {
-            show_only_positives = 1 - show_only_positives;
-            break;
-        }
-
-        case 'S':
-        case 's': {
-            show_segmentation = 1 - show_segmentation;
-            break;
-        }
-
-        case 'W':
-        case 'w': {
-            show_slice = (++show_slice) % 3;
-            break;
-        }
-
-        case 'J':
-        case 'j': {
-            network_distance -= 50;
-            break;
-        }
-
-        case 'L':
-        case 'l': {
-            network_distance += 50;
-            break;
-        }
-
-        case 'U':
-        case 'u': {
-            show_undetermined = 1 - show_undetermined;
             break;
         }
 
@@ -1304,96 +656,6 @@ void GLUTKeyboard(unsigned char key, int x, int y)
             break;
         }
 
-        /*case 'C':
-        case 'c': {
-            show_merge_candidate = 1 - show_merge_candidate;
-            break;
-        }
-
-        case 'D':
-        case 'd': {
-            show_segmentation = 1 - show_segmentation;
-            break;
-        }
-
-        case 'E':
-        case 'e': {
-            show_segments = 1 - show_segments;
-            break;
-        }
-
-        case 'F':
-        case 'f': {
-            show_feature_box = 1 - show_feature_box;
-            break;
-        }
-
-        case 'G':
-        case 'g': {
-            circular_index = (circular_index + 1) % circle_size;
-        }
-
-        case 'M': 
-        case 'm': {
-            network_distance = network_distance + 200;
-            printf("%d\n", network_distance);
-            break;
-        }
-
-        case 'N':
-        case 'n': {
-            network_distance = network_distance - 200;
-            printf("%d\n", network_distance);
-            break;
-        }
-
-        case 'O': 
-        case 'o': {
-            show_output = 1 - show_output;
-            break;
-        }
-
-        case 'P':
-        case 'p': {
-            show_only_positives = 1 - show_only_positives;
-            break;
-        }
-
-        case 'S':
-        case 's': {
-            show_skeleton = 1 - show_skeleton;
-            break;
-        }
-
-        case 'W':
-        case 'w': {
-            show_slice = (++show_slice) % 4;
-            break;
-        }
-
-        case 'L':
-        case 'l': {
-            show_legend = 1 - show_legend;
-            break;
-        }
-
-        case 'X':
-        case 'x': {
-            projection_dim = RN_X;
-            break;
-        }
-
-        case 'Y':
-        case 'y': {
-            projection_dim = RN_Y;
-            break;
-        }
-
-        case 'Z':
-        case 'z': {
-            projection_dim = RN_Z;
-            break;
-        }*/
 
         case ESCAPE: {
             GLUTStop();
@@ -1507,9 +769,6 @@ static int ParseArgs(int argc, char** argv)
         if((*argv)[0] == '-') {
             if(!strcmp(*argv, "-v")) print_verbose = 1;
             else if(!strcmp(*argv, "-debug")) print_debug = 1;
-            else if(!strcmp(*argv, "-max_distance")) { argv++; argc--; maximum_distance = atoi(*argv); } 
-            else if (!strcmp(*argv, "-network_distance")) { argv++; argc--; network_distance = atoi(*argv); }
-            else if (!strcmp(*argv, "-endpoint_distance")) { argv++; argc--; endpoint_distance = atoi(*argv); }
             else { fprintf(stderr, "Invalid program argument: %s\n", *argv); return 0; }
         } else {
             if(!prefix) prefix = *argv;
@@ -1546,12 +805,10 @@ int main(int argc, char** argv)
 
     if (!ReadMetaData(prefix)) exit(-1);
     if (!ReadData()) exit(-1);
+    if (!ReadSkeletons()) exit(-1);
 
     // get all of the preprocessing time
     Preprocessing();
-
-    // read all of the merge candidates
-    //if (!ReadMergeCandidates()) return 0;
 
     // set world box
     world_box = R3Box(0, 0, 0, resolution[RN_X] * grid_size[RN_X], resolution[RN_Y] * grid_size[RN_Y], resolution[RN_Z] * grid_size[RN_Z]);
