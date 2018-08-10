@@ -608,8 +608,13 @@ static int ParseArgs(int argc, char** argv)
     argc--; argv++;
     while(argc > 0) {
         if((*argv)[0] == '-') {
-            if(!strcmp(*argv, "-v")) print_verbose = 1;
-            else if(!strcmp(*argv, "-debug")) print_debug = 1;
+            if (!strcmp(*argv, "-v")) print_verbose = 1;
+            else if (!strcmp(*argv, "-debug")) print_debug = 1;
+            else if (!strcmp(*argv, "-resolution")) { 
+                argv++; argc--; resolution[RN_X] = atof(*argv); 
+                argv++; argc--; resolution[RN_Y] = atof(*argv);
+                argv++; argc--; resolution[RN_Z] = atof(*argv);
+            }
             else { fprintf(stderr, "Invalid program argument: %s\n", *argv); return 0; }
         } else {
             if (!filename) filename = *argv;
