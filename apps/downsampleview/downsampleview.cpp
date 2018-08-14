@@ -140,7 +140,7 @@ static int ReadData(void)
             for (long ie = 0; ie < nelements; ++ie) {
                 long element;
                 if (fread(&element, sizeof(long), 1, fp) != 1) return 0;
-                thinning_skeletons[iv].push_back(abs(element));
+                thinning_skeletons[iv].push_back(element);
             }
         }  
         fclose(fp);
@@ -165,7 +165,7 @@ static int ReadData(void)
             for (long ie = 0; ie < nelements; ++ie) {
                 long element;
                 if (fread(&element, sizeof(long), 1, fp) != 1) return 0;
-                medial_skeletons[iv].push_back(abs(element));
+                medial_skeletons[iv].push_back(element);
             }
         }
         fclose(fp);
@@ -190,7 +190,7 @@ static int ReadData(void)
             for (long ie = 0; ie < nelements; ++ie) {
                 long element;
                 if (fread(&element, sizeof(long), 1, fp) != 1) return 0;
-                teaser_skeletons[iv].push_back(abs(element));
+                teaser_skeletons[iv].push_back(element);
             }
         }
         fclose(fp);
@@ -616,6 +616,11 @@ static int ParseArgs(int argc, char** argv)
         if((*argv)[0] == '-') {
             if(!strcmp(*argv, "-v")) print_verbose = 1;
             else if(!strcmp(*argv, "-debug")) print_debug = 1;
+            else if (!strcmp(*argv, "-downsample")) {
+                argv++; argc--; resolution[RN_X] = atoi(*argv);
+                argv++; argc--; resolution[RN_Y] = atoi(*argv);
+                argv++; argc--; resolution[RN_Z] = atoi(*argv);
+            }
             else { fprintf(stderr, "Invalid program argument: %s\n", *argv); return 0; }
         } else {
             if (!prefix) prefix = *argv;
