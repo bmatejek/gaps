@@ -88,8 +88,9 @@ static int show_bbox = 1;
 static int example_index = 0;
 static int gold_index = 0;
 static const int cutoff = 500;
-static int largest_segments[cutoff];
+static long largest_segments[cutoff];
 static RNScalar downsample_rate = 2.0;
+static int color_cycle = 0;
 
 
 
@@ -291,6 +292,9 @@ static long IndicesToIndex(long ix, long iy, long iz)
 
 static RNRgb Color(unsigned long value)
 {
+    // allow alternating colors
+    value += color_cycle;
+
     RNScalar red = (RNScalar) (((107 * value) % 700) % 255) / 255.0;
     RNScalar green = (RNScalar) (((509 * value) % 900) % 255) / 255.0;
     RNScalar blue = (RNScalar) (((200 * value) % 777) % 255) / 255.0;
@@ -539,7 +543,7 @@ void GLUTMouse(int button, int state, int x, int y)
 void ReadSkeletonEndpoints(void)
 {
     char input_filename[4096];
-    sprintf(input_filename, "%s/example-%d.pts", output_directory, example_index);
+    sprintf(input_filename, "%s/skeleton-endpoints-%05ld.pts", output_directory, largest_segments[example_index]);
 
     FILE *fp = fopen(input_filename, "rb"); 
     if (fp) {
@@ -565,7 +569,7 @@ void WriteSkeletonEndpoints(void)
     if (not skeleton_endpoints.size()) return;
 
     char output_filename[4096];
-    sprintf(output_filename, "%s/example-%d.pts", output_directory, example_index);
+    sprintf(output_filename, "%s/skeleton-endpoints-%05ld.pts", output_directory, largest_segments[example_index]);
 
     FILE *fp = fopen(output_filename, "wb");
     if (!fp) { fprintf(stderr, "Failed to write %s\n", output_filename); }
@@ -648,6 +652,12 @@ void GLUTKeyboard(unsigned char key, int x, int y)
         case 'B':
         case 'b': {
             show_bbox = 1 - show_bbox;
+            break;
+        }
+
+        case 'C':
+        case 'c': {
+            color_cycle = (color_cycle + 1) % 6;
             break;
         }
 
@@ -879,7 +889,6 @@ static int ParseArgs(int argc, char** argv)
         fprintf(stderr, "Need to supply a prefix for data files\n");
         return 0;
     }
-    //if (training and validation) { fprintf(stderr, "Need to choose either training or validation (or neither), not both\n"); return 0; }
 
     // return success
     return 1;

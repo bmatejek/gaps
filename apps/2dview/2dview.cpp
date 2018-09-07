@@ -404,7 +404,6 @@ void GLUTKeyboard(unsigned char key, int x, int y)
     {
         int ia = key - '1';
         grid = grids[ia];
-        printf("%p\n", grid);
         SelectGrid(selected_slice_index);
         break;
     }
