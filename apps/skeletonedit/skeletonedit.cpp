@@ -20,6 +20,7 @@
 #define ENTER 13
 #define ESCAPE 27
 #define SPACEBAR 32
+#define DELETE 127
 
 static const int IB_Z = 0;
 static const int IB_Y = 1;
@@ -37,7 +38,6 @@ struct RNMeta;
 // I/O flags
 static int print_debug = 0;
 static int print_verbose = 0;
-static int benchmark = 0;
 static const char* prefix = NULL;
 
 
@@ -60,8 +60,13 @@ static R3Grid *grid = NULL;
 
 // skeleton variables
 
+static std::vector<long> *thinning_endpoints = NULL;
 static std::vector<long> *thinning_skeletons = NULL;
+
+static std::vector<long> *medial_endpoints = NULL;
 static std::vector<long> *medial_skeletons = NULL;
+
+static std::vector<long> *teaser_endpoints = NULL;
 static std::vector<long> *teaser_skeletons = NULL;
 
 
@@ -85,8 +90,8 @@ static int GLUTmodifiers = 0;
 
 // random access variables
 
-static std::vector<long> *segmentations = NULL;
-static long maximum_segmentation = -1;
+static std::vector<long> *golds = NULL;
+static long maximum_gold = -1;
 
 
 
@@ -100,7 +105,9 @@ static const int nastar_expansions = 9;
 static const int nresolutions = 18;
 
 static int show_bbox = 1;
-static int segmentation_index = 1;
+static int show_matches = 0;
+static int gold_index = 1;
+static int example_index = 0;
 static int skeleton_type = 0;
 static RNScalar downsample_rate = 2.0;
 static int color_cycle = 0;
@@ -138,6 +145,29 @@ static long astar_expansion = astar_expansions[astar_expansion_index];
 static long teaser_scale = teaser_scales[teaser_scale_index];
 static long teaser_buffer = teaser_buffers[teaser_buffer_index];
 static long *downsample_resolution = resolutions[resolution_index];
+
+
+static std::set<long> *medial_auto_hits = NULL;
+static std::set<long> *medial_gold_hits = NULL;
+static std::set<long> *medial_auto_misses = NULL;
+static std::set<long> *medial_gold_misses = NULL;
+
+static std::set<long> *teaser_auto_hits = NULL;
+static std::set<long> *teaser_gold_hits = NULL;
+static std::set<long> *teaser_auto_misses = NULL;
+static std::set<long> *teaser_gold_misses = NULL;
+
+static std::set<long> *thinning_auto_hits = NULL;
+static std::set<long> *thinning_gold_hits = NULL;
+static std::set<long> *thinning_auto_misses = NULL;
+static std::set<long> *thinning_gold_misses = NULL;
+
+
+// variables for ground truth skeletons
+
+static std::vector<R3Point> gold_endpoints = std::vector<R3Point>();
+static const int cutoff = 500;
+static long largest_segments[cutoff];
 
 
 
@@ -233,13 +263,108 @@ ReadMetaData(const char *prefix)
 }
 
 
+static int ReadLargestSegments(void)
+{
+    char input_filename[4096];
+    sprintf(input_filename, "benchmarks/skeleton/%s-skeleton-benchmark-examples.bin", prefix);
+
+    FILE *fp = fopen(input_filename, "rb");
+    
+    long input_cutoff;
+    if (fread(&input_cutoff, sizeof(long), 1, fp) != 1) return 0;
+    assert (cutoff == input_cutoff);
+    for (long iv = 0; iv < cutoff; ++iv) {
+        if (fread(&(largest_segments[iv]), sizeof(long), 1, fp) != 1) return 0;
+    }
+
+    fclose(fp);
+
+    printf("Read %d examples...\n", cutoff);
+
+    return 1;
+}
+
+
+
+void ReadSkeletonEndpoints(void)
+{
+    char input_filename[4096];
+    sprintf(input_filename, "benchmarks/skeleton/%s/skeleton-endpoints-%05ld.pts", prefix, largest_segments[example_index]);
+
+    FILE *fp = fopen(input_filename, "rb"); 
+    if (fp) {
+        long nendpoints;
+        if (fread(&nendpoints, sizeof(long), 1, fp) != 1) fprintf(stderr, "Failed to read %s\n", input_filename);
+        for (long ie = 0; ie < nendpoints; ++ie) {
+            long zpoint, ypoint, xpoint;
+            // read the three point locations
+            if (fread(&zpoint, sizeof(long), 1, fp) != 1) fprintf(stderr, "Failed to read %s\n", input_filename);
+            if (fread(&ypoint, sizeof(long), 1, fp) != 1) fprintf(stderr, "Failed to read %s\n", input_filename);
+            if (fread(&xpoint, sizeof(long), 1, fp) != 1) fprintf(stderr, "Failed to read %s\n", input_filename);
+
+            gold_endpoints.push_back(R3Point(xpoint, ypoint, zpoint));
+        }
+        fclose(fp);
+    }   
+}
+
+
+
+void WriteSkeletonEndpoints(void)
+{
+    if (not gold_endpoints.size()) return;
+
+    char output_filename[4096];
+    sprintf(output_filename, "benchmarks/skeleton/%s/skeleton-endpoints-%05ld.pts", prefix, largest_segments[example_index]);
+
+    FILE *fp = fopen(output_filename, "wb");
+    if (!fp) { fprintf(stderr, "Failed to write %s\n", output_filename); }
+
+    long nendpoints = gold_endpoints.size();
+    fwrite(&nendpoints, sizeof(long), 1, fp);
+    for (long ie = 0; ie < nendpoints; ++ie) {
+        R3Point endpoint = gold_endpoints[ie];
+        long xpoint = (long) (endpoint.X() + 0.5);
+        long ypoint = (long) (endpoint.Y() + 0.5);
+        long zpoint = (long) (endpoint.Z() + 0.5);
+        fwrite(&zpoint, sizeof(long), 1, fp);
+        fwrite(&ypoint, sizeof(long), 1, fp);
+        fwrite(&xpoint, sizeof(long), 1, fp);
+    }
+
+    fclose(fp);
+}
+
+
 
 static int
 ReadSkeletonData(void)
 {
+    if (thinning_endpoints) { delete[] thinning_endpoints; thinning_endpoints = NULL; }
     if (thinning_skeletons) { delete[] thinning_skeletons; thinning_skeletons = NULL; }
+
+    if (medial_endpoints) { delete[] medial_endpoints; medial_endpoints = NULL; }
     if (medial_skeletons) { delete[] medial_skeletons; medial_skeletons = NULL; }
+
+    if (teaser_endpoints) { delete[] teaser_endpoints; teaser_endpoints = NULL; }
     if (teaser_skeletons) { delete[] teaser_skeletons; teaser_skeletons = NULL; }
+
+    if (medial_auto_hits) { delete[] medial_auto_hits; medial_auto_hits = NULL; }
+    if (medial_gold_hits) { delete[] medial_gold_hits; medial_gold_hits = NULL; }
+    if (medial_auto_misses) { delete[] medial_auto_misses; medial_auto_misses = NULL; }
+    if (medial_gold_misses) { delete[] medial_gold_misses; medial_gold_misses = NULL; }
+    
+    if (teaser_auto_hits) { delete[] teaser_auto_hits; teaser_auto_hits = NULL; }
+    if (teaser_gold_hits) { delete[] teaser_gold_hits; teaser_gold_hits = NULL; }
+    if (teaser_auto_misses) { delete[] teaser_auto_misses; teaser_auto_misses = NULL; }
+    if (teaser_gold_misses) { delete[] teaser_auto_misses; teaser_auto_misses = NULL; }
+    
+    if (thinning_auto_hits) { delete[] thinning_auto_hits; thinning_auto_hits = NULL; }
+    if (thinning_gold_hits) { delete[] thinning_gold_hits; thinning_gold_hits = NULL; }
+    if (thinning_auto_misses) { delete[] thinning_auto_misses; thinning_auto_misses = NULL; }
+    if (thinning_gold_misses) { delete[] thinning_gold_misses; thinning_gold_misses = NULL; }
+
+
 
     printf("Resolution: (%ld, %ld, %ld)\n", downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z]);
     printf("  TEASER:\n");
@@ -250,22 +375,23 @@ ReadSkeletonData(void)
 
 
     char input_filename[4096];
-    if (benchmark) sprintf(input_filename, "benchmarks/skeleton/%s-thinning-%03ldx%03ldx%03ld-upsample-%02ld-skeleton.pts", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z], astar_expansion);
-    else sprintf(input_filename, "skeletons/%s/thinning-%03ldx%03ldx%03ld-upsample-%02ld-skeleton.pts", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z], astar_expansion);
+    sprintf(input_filename, "benchmarks/skeleton/%s-thinning-%03ldx%03ldx%03ld-upsample-%02ld-skeleton.pts", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z], astar_expansion);
 
     FILE *fp = fopen(input_filename, "rb");
-    long skeleton_maximum_segmentation;
+    long skeleton_maximum_gold;
     long input_grid_size[3];
     if (fp) {
         if (fread(&input_grid_size[IB_Z], sizeof(long), 1, fp) != 1) return 0;
         if (fread(&input_grid_size[IB_Y], sizeof(long), 1, fp) != 1) return 0;
         if (fread(&input_grid_size[IB_X], sizeof(long), 1, fp) != 1) return 0;
-        if (fread(&skeleton_maximum_segmentation, sizeof(long), 1, fp) != 1) return 0;
+        if (fread(&skeleton_maximum_gold, sizeof(long), 1, fp) != 1) return 0;
         assert (input_grid_size[IB_Z] == grid_size[IB_Z] and input_grid_size[IB_Y] == grid_size[IB_Y] and input_grid_size[IB_X] == grid_size[IB_X]);
-        assert (skeleton_maximum_segmentation == maximum_segmentation);
+        assert (skeleton_maximum_gold == maximum_gold);
 
-        thinning_skeletons = new std::vector<long>[maximum_segmentation];
-        for (long iv = 0; iv < maximum_segmentation; ++iv) {
+        thinning_endpoints = new std::vector<long>[maximum_gold];
+        thinning_skeletons = new std::vector<long>[maximum_gold];
+        for (long iv = 0; iv < maximum_gold; ++iv) {
+            thinning_endpoints[iv] = std::vector<long>();
             thinning_skeletons[iv] = std::vector<long>();
 
             long nelements; 
@@ -274,26 +400,79 @@ ReadSkeletonData(void)
                 long element;
                 if (fread(&element, sizeof(long), 1, fp) != 1) return 0;
 
-                thinning_skeletons[iv].push_back(element);
+                if (element < 0) thinning_endpoints[iv].push_back(-1 * element);
+                else thinning_skeletons[iv].push_back(element);
             }
         }  
         fclose(fp);
     }
 
-    if (benchmark) sprintf(input_filename, "benchmarks/skeleton/%s-medial-axis-%03ldx%03ldx%03ld-upsample-%02ld-skeleton.pts", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z], astar_expansion);
-    else sprintf(input_filename, "skeletons/%s/medial-axis-%03ldx%03ldx%03ld-upsample-%02ld-skeleton.pts", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z], astar_expansion);
+    char matching_filename[4096];
+    sprintf(matching_filename, "benchmarks/skeleton/matchings/%s-thinning-%03ldx%03ldx%03ld-%02ld-matching-pairs.pts", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z], astar_expansion);
+
+    FILE *matching_fp = fopen(matching_filename, "rb");
+    if (matching_fp) {
+        long matching_maximum_gold;
+        if (fread(&matching_maximum_gold, sizeof(long), 1, matching_fp) != 1) return 0;
+        assert (matching_maximum_gold == maximum_gold);
+
+        thinning_gold_hits = new std::set<long>[maximum_gold];
+        thinning_auto_hits = new std::set<long>[maximum_gold];
+        thinning_gold_misses = new std::set<long>[maximum_gold];
+        thinning_auto_misses = new std::set<long>[maximum_gold];
+
+        for (long iv = 0; iv < maximum_gold; ++iv) {
+            long nmatches;
+            if (fread(&nmatches, sizeof(long), 1, matching_fp) != 1) return 0;
+
+            std::set<long> gold_matches = std::set<long>();
+            std::set<long> auto_matches = std::set<long>();
+
+            for (long ie = 0; ie < nmatches; ++ie) {
+                long gold_index;
+                long auto_index;
+                if (fread(&gold_index, sizeof(long), 1, matching_fp) != 1) return 0;
+                if (fread(&auto_index, sizeof(long), 1, matching_fp) != 1) return 0;
+
+                gold_matches.insert(gold_index);
+                auto_matches.insert(auto_index);
+            }
+
+            thinning_gold_hits[iv] = std::set<long>();
+            thinning_auto_hits[iv] = std::set<long>();
+            thinning_gold_misses[iv] = std::set<long>();
+            thinning_auto_misses[iv] = std::set<long>();
+
+            for (unsigned long ie = 0; ie < gold_endpoints.size(); ++ie) {
+                if (gold_matches.find(ie) == gold_matches.end()) thinning_gold_misses[iv].insert(ie);
+                else thinning_gold_hits[iv].insert(ie);
+            }
+            for (unsigned long ie = 0; ie < thinning_endpoints[iv].size(); ++ie) {
+                if (auto_matches.find(ie) == auto_matches.end()) thinning_auto_misses[iv].insert(ie);
+                else thinning_auto_hits[iv].insert(ie);
+            }
+        }
+
+        fclose(matching_fp);
+    }
+
+
+
+    sprintf(input_filename, "benchmarks/skeleton/%s-medial-axis-%03ldx%03ldx%03ld-upsample-%02ld-skeleton.pts", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z], astar_expansion);
 
     fp = fopen(input_filename, "rb");
     if (fp) {
         if (fread(&input_grid_size[IB_Z], sizeof(long), 1, fp) != 1) return 0;
         if (fread(&input_grid_size[IB_Y], sizeof(long), 1, fp) != 1) return 0;
         if (fread(&input_grid_size[IB_X], sizeof(long), 1, fp) != 1) return 0;
-        if (fread(&skeleton_maximum_segmentation, sizeof(long), 1, fp) != 1) return 0;
+        if (fread(&skeleton_maximum_gold, sizeof(long), 1, fp) != 1) return 0;
         assert (input_grid_size[IB_Z] == grid_size[IB_Z] and input_grid_size[IB_Y] == grid_size[IB_Y] and input_grid_size[IB_X] == grid_size[IB_X]);
-        assert (skeleton_maximum_segmentation == maximum_segmentation);
+        assert (skeleton_maximum_gold == maximum_gold);
 
-        medial_skeletons = new std::vector<long>[maximum_segmentation];
-        for (long iv = 0; iv < maximum_segmentation; ++iv) {
+        medial_endpoints = new std::vector<long>[maximum_gold];
+        medial_skeletons = new std::vector<long>[maximum_gold];
+        for (long iv = 0; iv < maximum_gold; ++iv) {
+            medial_endpoints[iv] = std::vector<long>();
             medial_skeletons[iv] = std::vector<long>();
 
             long nelements;
@@ -301,26 +480,80 @@ ReadSkeletonData(void)
             for (long ie = 0; ie < nelements; ++ie) {
                 long element;
                 if (fread(&element, sizeof(long), 1, fp) != 1) return 0;
-                medial_skeletons[iv].push_back(element);
+                if (element < 0) medial_endpoints[iv].push_back(-1 * element);
+                else medial_skeletons[iv].push_back(element);
             }
         }
         fclose(fp);
     }
 
-    if (benchmark) sprintf(input_filename, "benchmarks/skeleton/%s-teaser-%03ldx%03ldx%03ld-upsample-%02ld-%02ld-00-skeleton.pts", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z], teaser_scale, teaser_buffer);
-    else sprintf(input_filename, "skeletons/%s/teaser-%03ldx%03ldx%03ld-upsample-%02ld-%02ld-00-skeleton.pts", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z], teaser_scale, teaser_buffer);
+
+    sprintf(matching_filename, "benchmarks/skeleton/matchings/%s-medial-axis-%03ldx%03ldx%03ld-%02ld-matching-pairs.pts", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z], astar_expansion);
+
+    matching_fp = fopen(matching_filename, "rb");
+    if (matching_fp) {
+        long matching_maximum_gold;
+        if (fread(&matching_maximum_gold, sizeof(long), 1, matching_fp) != 1) return 0;
+        assert (matching_maximum_gold == maximum_gold);
+
+        medial_gold_hits = new std::set<long>[maximum_gold];
+        medial_auto_hits = new std::set<long>[maximum_gold];
+        medial_gold_misses = new std::set<long>[maximum_gold];
+        medial_auto_misses = new std::set<long>[maximum_gold];
+
+        for (long iv = 0; iv < maximum_gold; ++iv) {
+            long nmatches;
+            if (fread(&nmatches, sizeof(long), 1, matching_fp) != 1) return 0;
+
+            std::set<long> gold_matches = std::set<long>();
+            std::set<long> auto_matches = std::set<long>();
+
+            for (long ie = 0; ie < nmatches; ++ie) {
+                long gold_index;
+                long auto_index;
+                if (fread(&gold_index, sizeof(long), 1, matching_fp) != 1) return 0;
+                if (fread(&auto_index, sizeof(long), 1, matching_fp) != 1) return 0;
+
+                gold_matches.insert(gold_index);
+                auto_matches.insert(auto_index);
+            }
+
+            medial_gold_hits[iv] = std::set<long>();
+            medial_auto_hits[iv] = std::set<long>();
+            medial_gold_misses[iv] = std::set<long>();
+            medial_auto_misses[iv] = std::set<long>();
+
+            for (unsigned long ie = 0; ie < gold_endpoints.size(); ++ie) {
+                if (gold_matches.find(ie) == gold_matches.end()) medial_gold_misses[iv].insert(ie);
+                else medial_gold_hits[iv].insert(ie);
+            }
+            for (unsigned long ie = 0; ie < medial_endpoints[iv].size(); ++ie) {
+                if (auto_matches.find(ie) == auto_matches.end()) medial_auto_misses[iv].insert(ie);
+                else medial_auto_hits[iv].insert(ie);
+            }
+        }
+
+        fclose(matching_fp);
+    }
+
+
+
+
+    sprintf(input_filename, "benchmarks/skeleton/%s-teaser-%03ldx%03ldx%03ld-upsample-%02ld-%02ld-00-skeleton.pts", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z], teaser_scale, teaser_buffer);
 
     fp = fopen(input_filename, "rb");
     if (fp) {
         if (fread(&input_grid_size[IB_Z], sizeof(long), 1, fp) != 1) return 0;
         if (fread(&input_grid_size[IB_Y], sizeof(long), 1, fp) != 1) return 0;
         if (fread(&input_grid_size[IB_X], sizeof(long), 1, fp) != 1) return 0;
-        if (fread(&skeleton_maximum_segmentation, sizeof(long), 1, fp) != 1) return 0;
+        if (fread(&skeleton_maximum_gold, sizeof(long), 1, fp) != 1) return 0;
         assert (input_grid_size[IB_Z] == grid_size[IB_Z] and input_grid_size[IB_Y] == grid_size[IB_Y] and input_grid_size[IB_X] == grid_size[IB_X]);
-        assert (skeleton_maximum_segmentation == maximum_segmentation);
+        assert (skeleton_maximum_gold == maximum_gold);
 
-        teaser_skeletons = new std::vector<long>[maximum_segmentation];
-        for (long iv = 0; iv < maximum_segmentation; ++iv) {
+        teaser_endpoints = new std::vector<long>[maximum_gold];
+        teaser_skeletons = new std::vector<long>[maximum_gold];
+        for (long iv = 0; iv < maximum_gold; ++iv) {
+            teaser_endpoints[iv] = std::vector<long>();
             teaser_skeletons[iv] = std::vector<long>();
 
             long nelements;
@@ -328,11 +561,64 @@ ReadSkeletonData(void)
             for (long ie = 0; ie < nelements; ++ie) {
                 long element;
                 if (fread(&element, sizeof(long), 1, fp) != 1) return 0;
-                teaser_skeletons[iv].push_back(element);
+                
+                if (element < 0) teaser_endpoints[iv].push_back(-1 * element);
+                else teaser_skeletons[iv].push_back(element);
+
             }
         }
         fclose(fp);
     }
+
+    sprintf(matching_filename, "benchmarks/skeleton/matchings/%s-teaser-%03ldx%03ldx%03ld-%02ld-%02ld-00-matching-pairs.pts", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z], teaser_scale, teaser_buffer);
+
+    matching_fp = fopen(matching_filename, "rb");
+    if (matching_fp) {
+        long matching_maximum_gold;
+        if (fread(&matching_maximum_gold, sizeof(long), 1, matching_fp) != 1) return 0;
+        assert (matching_maximum_gold == maximum_gold);
+
+        teaser_gold_hits = new std::set<long>[maximum_gold];
+        teaser_auto_hits = new std::set<long>[maximum_gold];
+        teaser_gold_misses = new std::set<long>[maximum_gold];
+        teaser_auto_misses = new std::set<long>[maximum_gold];
+
+        for (long iv = 0; iv < maximum_gold; ++iv) {
+            long nmatches;
+            if (fread(&nmatches, sizeof(long), 1, matching_fp) != 1) return 0;
+
+            std::set<long> gold_matches = std::set<long>();
+            std::set<long> auto_matches = std::set<long>();
+
+            for (long ie = 0; ie < nmatches; ++ie) {
+                long gold_index;
+                long auto_index;
+                if (fread(&gold_index, sizeof(long), 1, matching_fp) != 1) return 0;
+                if (fread(&auto_index, sizeof(long), 1, matching_fp) != 1) return 0;
+
+                gold_matches.insert(gold_index);
+                auto_matches.insert(auto_index);
+            }
+
+            teaser_gold_hits[iv] = std::set<long>();
+            teaser_auto_hits[iv] = std::set<long>();
+            teaser_gold_misses[iv] = std::set<long>();
+            teaser_auto_misses[iv] = std::set<long>();
+
+            for (unsigned long ie = 0; ie < gold_endpoints.size(); ++ie) {
+                if (gold_matches.find(ie) == gold_matches.end()) teaser_gold_misses[iv].insert(ie);
+                else teaser_gold_hits[iv].insert(ie);
+            }
+            for (unsigned long ie = 0; ie < teaser_endpoints[iv].size(); ++ie) {
+                if (auto_matches.find(ie) == auto_matches.end()) teaser_auto_misses[iv].insert(ie);
+                else teaser_auto_hits[iv].insert(ie);
+            }
+        }
+
+        fclose(matching_fp);
+    }
+
+
 
     // return success
     return 1;
@@ -346,23 +632,16 @@ static int ReadData(void)
     RNTime start_time;
     start_time.Read();
 
-    if (benchmark) {
-        R3Grid **gold_grids = RNReadH5File(meta_data.gold_filename, meta_data.gold_dataset);
-        grid = gold_grids[0];
-        delete[] gold_grids;
-    }
-    else {
-        R3Grid **rhoana_grids = RNReadH5File(meta_data.rhoana_filename, meta_data.rhoana_dataset);
-        grid = rhoana_grids[0];
-        delete[] rhoana_grids;
-    }
+    R3Grid **gold_grids = RNReadH5File(meta_data.gold_filename, meta_data.gold_dataset);
+    grid = gold_grids[0];
+    delete[] gold_grids;
     
     grid_size[IB_X] = grid->XResolution();
     grid_size[IB_Y] = grid->YResolution();
     grid_size[IB_Z] = grid->ZResolution();
 
     // get the maximum values for each grid
-    maximum_segmentation = (long) (grid->Maximum() + 0.5) + 1;
+    maximum_gold = (long) (grid->Maximum() + 0.5) + 1;
 
     // print statistics
     if(print_verbose) {
@@ -423,9 +702,9 @@ static void Preprocessing(void)
     start_time.Read();
 
     // create a vector for each valid ID
-    segmentations = new std::vector<long>[maximum_segmentation];
-    for (long iv = 0; iv < maximum_segmentation; ++iv)
-        segmentations[iv] = std::vector<long>();
+    golds = new std::vector<long>[maximum_gold];
+    for (long iv = 0; iv < maximum_gold; ++iv)
+        golds[iv] = std::vector<long>();
 
     // go through all voxels to see if it belongs to the boundary
     for (int iz = 1; iz < grid_size[IB_Z] - 1; ++iz) {
@@ -443,7 +722,7 @@ static void Preprocessing(void)
                     (long)(grid->GridValue(ix, iy, iz - 1) + 0.5) != segment ||
                     (long)(grid->GridValue(ix, iy, iz + 1) + 0.5) != segment)
                 {
-                    segmentations[segment].push_back(iv);
+                    golds[segment].push_back(iv);
                 }
             }
         }
@@ -452,7 +731,7 @@ static void Preprocessing(void)
     if (print_verbose) {
         printf("Preprocessing...\n");
         printf("  Time = %0.2f seconds\n", start_time.Elapsed());
-        printf("  Maximum Segment = %ld\n", maximum_segmentation);
+        printf("  Maximum Segment = %ld\n", maximum_gold);
     }
 }
 
@@ -467,13 +746,13 @@ static void DrawSegment(int segment_index)
     transformation.Push();
 
     glBegin(GL_POINTS);
-    for (unsigned int iv = 0; iv < segmentations[segment_index].size(); ++iv) {
+    for (unsigned int iv = 0; iv < golds[segment_index].size(); ++iv) {
         // faster rendering with downsampling
         if (RNRandomScalar() > 1.0 / downsample_rate) continue;
 
         // get the coordinates from the linear index
         long ix, iy, iz;
-        IndexToIndices(segmentations[segment_index][iv], ix, iy, iz);
+        IndexToIndices(golds[segment_index][iv], ix, iy, iz);
         glVertex3f(ix, iy, iz);
     }
     glEnd();
@@ -485,12 +764,14 @@ static void DrawSegment(int segment_index)
 
 static void DrawSkeleton(int segment_index)
 {
-    std::vector<long> *skeletons;
-    if (skeleton_type == 0) skeletons = thinning_skeletons;
-    else if (skeleton_type == 1) skeletons = medial_skeletons;
-    else if (skeleton_type == 2) skeletons = teaser_skeletons;
+    std::vector<long> *endpoints, *skeletons;
+    if (skeleton_type == 0) { endpoints = thinning_endpoints; skeletons = thinning_skeletons; }
+    else if (skeleton_type == 1) { endpoints = medial_endpoints; skeletons = medial_skeletons; }
+    else if (skeleton_type == 2) { endpoints = teaser_endpoints; skeletons = teaser_skeletons; }
     else return;
+
     if (!skeletons) return;
+    if (!endpoints) return;
 
     // sizes for skeleton joints
     double joint_size = 3;
@@ -503,8 +784,6 @@ static void DrawSkeleton(int segment_index)
     for (unsigned long is = 0; is < skeletons[segment_index].size(); ++is) {
         // get the coordinates from the linear index
         long iv = skeletons[segment_index][is];
-        bool endpoint = (iv < 0);
-        if (endpoint) continue;
         long ix, iy, iz;
         IndexToIndices(iv, ix, iy, iz);
         glVertex3f(ix, iy, iz);
@@ -513,12 +792,34 @@ static void DrawSkeleton(int segment_index)
 
     transformation.Pop();
 
-    for (unsigned long is = 0; is < skeletons[segment_index].size(); ++is) {
-        // get the coordinates from the linear index
-        long iv = skeletons[segment_index][is];
-        bool endpoint = (iv < 0);
-        if (!endpoint) continue;
-        iv = -1 * iv;
+    std::set<long> hits, misses;
+    if (skeleton_type == 0 and thinning_auto_hits and thinning_auto_misses) { hits = thinning_auto_hits[segment_index]; misses = thinning_auto_misses[segment_index]; }
+    else if (skeleton_type == 1 and medial_auto_hits and medial_auto_misses) { hits = medial_auto_hits[segment_index]; misses = medial_auto_misses[segment_index]; }
+    else if (skeleton_type == 2 and teaser_auto_hits and teaser_auto_misses) { hits = teaser_auto_hits[segment_index]; misses = teaser_auto_misses[segment_index]; }
+    else return;
+
+    std::set<long>::iterator it;
+    if (show_matches) {
+        RNLoadRgb(RNred_rgb);
+        for (it = hits.begin(); it != hits.end(); ++it) {
+            long index = *it;
+            long iv = endpoints[segment_index][index];
+            long ix, iy, iz;
+            IndexToIndices(iv, ix, iy, iz);
+            
+            // convert to world coordinates since transformation is popped
+            ix = resolution[IB_X] * ix;
+            iy = resolution[IB_Y] * iy;
+            iz = resolution[IB_Z] * iz;
+
+            R3Sphere(R3Point(ix, iy, iz), endpoint_size).Draw();
+        }  
+    }
+
+    RNLoadRgb(RNyellow_rgb);
+    for (it = misses.begin(); it != misses.end(); ++it) {
+        long index = *it;
+        long iv = endpoints[segment_index][index];
         long ix, iy, iz;
         IndexToIndices(iv, ix, iy, iz);
         
@@ -531,6 +832,34 @@ static void DrawSkeleton(int segment_index)
     }
 }
 
+
+
+static void DrawGroundTruth(int segment_index)
+{   
+    double endpoint_size = 60;
+
+    std::set<long> hits, misses;
+    if (skeleton_type == 0 and thinning_gold_hits and thinning_gold_misses) { hits = thinning_gold_hits[segment_index]; misses = thinning_gold_misses[segment_index]; }
+    else if (skeleton_type == 1 and medial_gold_hits and medial_gold_misses) { hits = medial_gold_hits[segment_index]; misses = medial_gold_misses[segment_index]; }
+    else if (skeleton_type == 2 and teaser_gold_hits and teaser_gold_misses) { hits = teaser_gold_hits[segment_index]; misses = teaser_gold_misses[segment_index]; }
+    else return;
+
+    std::set<long>::iterator it;
+    if (show_matches) {
+        RNLoadRgb(RNgreen_rgb);
+        for (it = hits.begin(); it != hits.end(); ++it) {
+            long index = *it;
+            R3Point endpoint = gold_endpoints[index];
+            R3Sphere(R3Point(resolution[IB_X] * endpoint.X(), resolution[IB_Y] * endpoint.Y(), resolution[IB_Z] * endpoint.Z()), endpoint_size).Draw();
+        }
+    }
+    RNLoadRgb(RNblue_rgb);
+    for (it = misses.begin(); it != misses.end(); ++it) {
+        long index = *it;
+        R3Point endpoint = gold_endpoints[index];
+        R3Sphere(R3Point(resolution[IB_X] * endpoint.X(), resolution[IB_Y] * endpoint.Y(), resolution[IB_Z] * endpoint.Z()), endpoint_size).Draw();
+    }
+}
 
 
 ////////////////////////////////////////////////////////////////////////
@@ -588,10 +917,12 @@ void GLUTRedraw(void)
 
     // draw machine labels and skeletons
     glPointSize(1);
-    RNLoadRgb(Color(segmentation_index));
-    DrawSegment(segmentation_index);
+    RNLoadRgb(Color(gold_index));
+    DrawSegment(gold_index);
     RNLoadRgb(RNRgb(1.0 - background_color[0], 1.0 - background_color[1], 1.0 - background_color[2]));
-    DrawSkeleton(segmentation_index);
+    DrawSkeleton(gold_index);
+    DrawGroundTruth(gold_index);
+
 
     // epilogue
     glEnable(GL_LIGHTING);
@@ -688,23 +1019,32 @@ void GLUTSpecial(int key, int x, int y)
 
     switch(key) {
         case GLUT_KEY_LEFT: {
-            --segmentation_index;
-            if (segmentation_index < 0)
-                segmentation_index = 0;
+            --example_index;
+            if (example_index < 0)
+                example_index = 0;
 
-            printf("Label: %d\n", segmentation_index);
+            gold_index = largest_segments[example_index];
+
+            printf("Label: %d\n", gold_index);
             break;
         }
 
         case GLUT_KEY_RIGHT: {
-            ++segmentation_index;
-            if (segmentation_index >= maximum_segmentation)
-                segmentation_index = maximum_segmentation - 1;
+            ++example_index;
+            if (example_index >= cutoff)
+                example_index = cutoff - 1;
 
-            printf("Label: %d\n", segmentation_index);
+            gold_index = largest_segments[example_index];
+
+            printf("Label: %d\n", gold_index);
             break;    
         }
     }
+
+    // upload the new endpoints
+    gold_endpoints.clear();
+    ReadSkeletonEndpoints();
+    ReadSkeletonData();
 
     // redraw
     glutPostRedisplay();
@@ -749,6 +1089,68 @@ void GLUTKeyboard(unsigned char key, int x, int y)
             break;
         }
 
+        case 'E':
+        case 'e': {
+            R3Ray world_ray = viewer->WorldRay(x, y);
+
+            RNLength closest_distance = DBL_MAX;
+            R3Point closest_point;
+
+            static const int buffer = 40;
+
+            for (unsigned long ig = 0; ig < golds[gold_index].size(); ++ig) {
+                long iv = golds[gold_index][ig];
+
+                // convert to three coordinates
+                long ix, iy, iz;
+                IndexToIndices(iv, ix, iy, iz);
+
+                R3Point location = R3Point(ix, iy, iz);
+                location.Transform(transformation);
+
+                RNLength distance = R3Distance(world_ray, location);
+
+                if (distance < closest_distance) {
+                    closest_distance = distance;
+                    closest_point = R3Point(ix, iy, iz);
+                }
+            }
+
+            // find the next closest point farther down the ray
+            closest_distance = DBL_MAX;
+            R3Point second_closest_point;
+
+            for (unsigned long ig = 0 ; ig < golds[gold_index].size(); ++ig) {
+                long iv = golds[gold_index][ig];
+
+                long ix, iy, iz;
+                IndexToIndices(iv, ix, iy, iz);
+
+                R3Point location = R3Point(ix, iy, iz);
+                location.Transform(transformation);
+
+                RNLength distance = R3Distance(world_ray, location);
+                
+                long deltaz = (long) (closest_point.Z() - iz + 0.5);
+                long deltay = (long) (closest_point.Y() - iy + 0.5);
+                long deltax = (long) (closest_point.X() - ix + 0.5);
+
+                RNScalar normalized_distance = sqrt(resolution[RN_Z] * resolution[RN_Z] * deltaz * deltaz + resolution[RN_Y] * resolution[RN_Y] * deltay * deltay + resolution[RN_X] * resolution[RN_X] * deltax * deltax);
+                if (normalized_distance < buffer) continue;
+
+                if (distance < closest_distance) {
+                    closest_distance = distance;
+                    second_closest_point = R3Point(ix, iy, iz);
+                }
+            }
+
+            gold_endpoints.push_back((closest_point + second_closest_point) / 2);
+
+            printf("  No. endpoints: %ld\n", gold_endpoints.size());
+
+            break;
+        }        
+
         case 'K':
         case 'k': {
             skeleton_type = (skeleton_type + 1) % nskeleton_opts;
@@ -770,14 +1172,9 @@ void GLUTKeyboard(unsigned char key, int x, int y)
             break;
         }
 
-        case 'R': 
-        case 'r': {
-            resolution_index = (resolution_index + 1) % nresolutions;
-            
-            downsample_resolution = resolutions[resolution_index];
-
-            ReadSkeletonData();
-
+        case 'M':
+        case 'm': {
+            show_matches = 1 - show_matches;
             break;
         }
 
@@ -803,6 +1200,17 @@ void GLUTKeyboard(unsigned char key, int x, int y)
             break;
         }
 
+        case 'R': 
+        case 'r': {
+            resolution_index = (resolution_index + 1) % nresolutions;
+            
+            downsample_resolution = resolutions[resolution_index];
+
+            ReadSkeletonData();
+
+            break;
+        }
+
         case 'S': 
         case 's': {
             teaser_scale_index = (teaser_scale_index + 1) % nteaser_scales;
@@ -825,6 +1233,30 @@ void GLUTKeyboard(unsigned char key, int x, int y)
             break;
         }
 
+        case DELETE: {
+            R3Ray world_ray = viewer->WorldRay(x, y);
+
+            RNLength closest_distance = DBL_MAX;
+            unsigned long delete_index = 0;
+
+            for (unsigned long iv = 0; iv < gold_endpoints.size(); ++iv) {
+                R3Point location = gold_endpoints[iv];
+                location.Transform(transformation);
+
+                RNLength distance = R3Distance(world_ray, location);
+                if (distance < closest_distance) {
+                    closest_distance = distance;
+                    delete_index = iv;
+                }
+            }
+
+            gold_endpoints.erase(gold_endpoints.begin() + delete_index);
+
+            printf("  No. endpoints: %ld\n", gold_endpoints.size());
+
+            break;
+
+        }
 
         case ENTER: {
             background_color[0] = 1.0 - background_color[0];
@@ -946,7 +1378,6 @@ static int ParseArgs(int argc, char** argv)
         if((*argv)[0] == '-') {
             if (!strcmp(*argv, "-v")) print_verbose = 1;
             else if (!strcmp(*argv, "-debug")) print_debug = 1;
-            else if (!strcmp(*argv, "-benchmark")) benchmark = 1;
             else { fprintf(stderr, "Invalid program argument: %s\n", *argv); return 0; }
         } else {
             if (!prefix) prefix = *argv;
@@ -982,6 +1413,9 @@ int main(int argc, char** argv)
 
     if (!ReadMetaData(prefix)) exit(-1);
     if (!ReadData()) exit(-1);
+    if (!ReadLargestSegments()) exit(-1);
+    gold_index = largest_segments[example_index];
+    ReadSkeletonEndpoints();
     if (!ReadSkeletonData()) exit(-1);
 
     // get all of the preprocessing time

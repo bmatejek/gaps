@@ -112,7 +112,7 @@ static long resolutions[nresolutions][3] = {
 };
 static short teaser_scale_index = 2;
 static short teaser_buffer_index = 1;
-static short resolution_index = 8;
+static short resolution_index = 5;
 
 static long teaser_scale = teaser_scales[teaser_scale_index];
 static long teaser_buffer = teaser_buffers[teaser_buffer_index];
