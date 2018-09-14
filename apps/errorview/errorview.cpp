@@ -500,6 +500,8 @@ static void DrawSegment(int segment_index)
 
 static void DrawSkeleton(int segment_index)
 {
+    if (!skeletons) return;
+
     // sizes for skeleton joints
     double joint_size = 3;
     double endpoint_size = 60;
