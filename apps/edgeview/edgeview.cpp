@@ -1,4 +1,4 @@
-// Source file for visualizing errors
+// Source file for edge visualization
 
 
 
@@ -10,7 +10,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
-#include <unordered_map>
+#include <map>
 #include <set>
 #include <algorithm>
 
@@ -37,14 +37,16 @@ struct RNMeta;
 // I/O flags
 static int print_debug = 0;
 static int print_verbose = 0;
+static int benchmark = 0;
 static const char* prefix = NULL;
-static const int merge_threshold = 20000;
+static long maximum_distance = 400;
 
 
 
 // program variables
 
 static double resolution[3] = { -1, -1, -1 };
+static long network_radius[3] = { 600, 600, 600 };
 static long grid_size[3] = { -1, -1, -1 };
 static R3Affine transformation = R3null_affine;
 static R3Viewer *viewer = NULL;
@@ -54,14 +56,15 @@ static R3Box world_box = R3null_box;
 
 // voxel grids
 
-static R3Grid *rhoana_grid = NULL;
-static R3Grid *gold_grid = NULL;
+static R3Grid *grid = NULL;
 
 
 
 // skeleton variables
 
-static std::vector<long> *skeletons = NULL;
+static std::vector<long> *thinning_skeletons = NULL;
+static std::vector<long> *medial_skeletons = NULL;
+static std::vector<long> *teaser_skeletons = NULL;
 
 
 
@@ -86,28 +89,101 @@ static int GLUTmodifiers = 0;
 
 static std::vector<long> *segmentations = NULL;
 static long maximum_segmentation = -1;
-static long *nvoxels_per_segment = NULL;
 
-static std::vector<std::vector<long> > split_errors = std::vector<std::vector<long> >();
-static std::vector<long> merge_errors = std::vector<long>();
-
-static int split_index = 0;
-static int merge_index = 0;
-
-static int show_merge_errors = 0;
-static int show_skeletons = 0;
 
 
 // display variables
 
 static const int ncolor_opts = 6;
+static const int nskeleton_opts = 4;
+static const int nteaser_scales = 6;
+static const int nteaser_buffers = 5;
+static const int nastar_expansions = 9;
+static const int nresolutions = 18;
+
 static int show_bbox = 1;
+static int skeleton_type = 0;
 static RNScalar downsample_rate = 2.0;
 static int color_cycle = 0;
 
+
+
+struct Candidate {
+    Candidate() : 
+    label_one(-1),
+    label_two(-1),
+    zpoint(-1),
+    ypoint(-1),
+    xpoint(-1),
+    ground_truth(-1)
+    {
+    }
+
+    Candidate(long label_one, long label_two, long zpoint, long ypoint, long xpoint, char ground_truth) : 
+    label_one(label_one),
+    label_two(label_two),
+    zpoint(zpoint),
+    ypoint(ypoint),
+    xpoint(xpoint),
+    ground_truth(ground_truth)
+    {
+    }
+
+
+    long label_one;
+    long label_two;
+    long zpoint;
+    long ypoint;
+    long xpoint;
+    char ground_truth;
+};
+
+static int show_positives = 1;
+static int show_negatives = 0;
+
+static long positive_index = 0;
+static std::vector<struct Candidate> positive_candidates = std::vector<struct Candidate>();
+static long negative_index = 0;
+static std::vector<struct Candidate> negative_candidates = std::vector<struct Candidate>();
+static long undetermined_index = 0;
+static std::vector<struct Candidate> undetermined_candidates = std::vector<struct Candidate>();
+static struct Candidate candidate;
+
+
 // variables that enable cycling through skeletons
-static long skeleton_resolution[3] = { 80, 80, 80 };
-static long astar_expansion = 0;
+static long teaser_scales[nteaser_scales] = { 7, 9, 11, 13, 15, 17 };
+static long teaser_buffers[nteaser_buffers] = { 1, 2, 3, 4, 5 };
+static long resolutions[nresolutions][3] = {
+    { 30, 30, 30 },
+    { 40, 40, 40 },
+    { 50, 50, 50 },
+    { 60, 60, 60 },
+    { 70, 70, 70 },
+    { 80, 80, 80 },
+    { 90, 90, 90 },
+    { 100, 100, 100 },
+    { 110, 110, 110 },
+    { 120, 120, 120 },
+    { 130, 130, 130 },
+    { 140, 140, 140 },
+    { 150, 150, 150 },
+    { 160, 160, 160 },
+    { 170, 170, 170 },
+    { 180, 180, 180 },
+    { 190, 190, 190 },
+    { 200, 200, 200 },
+};
+static long astar_expansions[nastar_expansions] = { 0, 11, 13, 15, 17, 19, 21, 23, 25 };
+static short teaser_scale_index = 2;
+static short teaser_buffer_index = 1;
+static short resolution_index = 5;
+static short astar_expansion_index = 0;
+
+static long astar_expansion = astar_expansions[astar_expansion_index];
+static long teaser_scale = teaser_scales[teaser_scale_index];
+static long teaser_buffer = teaser_buffers[teaser_buffer_index];
+static long *downsample_resolution = resolutions[resolution_index];
+
 
 
 ////////////////////////////////////////////////////////////////////////
@@ -204,11 +280,102 @@ ReadMetaData(const char *prefix)
 
 
 static int
+ReadCandidates(void)
+{
+    char filename[4096];
+    sprintf(filename, "features/skeleton/%s-%ldnm-positive.candidates", prefix, maximum_distance);
+
+    FILE *fp = fopen(filename, "rb");
+    if (!fp) { fprintf(stderr, "Failed to read %s\n", filename); return 0; }
+
+    long npositves;
+    if (fread(&npositves, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s\n", filename); return 0; }
+    for (long iv = 0; iv < npositves; ++iv) {
+        long label_one, label_two, zpoint, ypoint, xpoint;
+        char ground_truth;
+        if (fread(&label_one, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s\n", filename); return 0; }
+        if (fread(&label_two, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s\n", filename); return 0; }
+        if (fread(&zpoint, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s\n", filename); return 0; }
+        if (fread(&ypoint, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s\n", filename); return 0; }
+        if (fread(&xpoint, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s\n", filename); return 0; }
+        if (fread(&ground_truth, sizeof(char), 1, fp) !=1 ) { fprintf(stderr, "Failed to read %s\n", filename); return 0; }
+
+        Candidate candidate = Candidate(label_one, label_two, zpoint, ypoint, xpoint, ground_truth);
+        positive_candidates.push_back(candidate);
+    }
+
+    fclose(fp);
+
+    sprintf(filename, "features/skeleton/%s-%ldnm-negative.candidates", prefix, maximum_distance);
+
+    fp = fopen(filename, "rb");
+    if (!fp) { fprintf(stderr, "Failed to read %s\n", filename); return 0; }
+
+    long nnegatives;
+    if (fread(&nnegatives, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s\n", filename); return 0; }
+    for (long iv = 0; iv < nnegatives; ++iv) {
+        long label_one, label_two, zpoint, ypoint, xpoint;
+        char ground_truth;
+        if (fread(&label_one, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s\n", filename); return 0; }
+        if (fread(&label_two, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s\n", filename); return 0; }
+        if (fread(&zpoint, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s\n", filename); return 0; }
+        if (fread(&ypoint, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s\n", filename); return 0; }
+        if (fread(&xpoint, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s\n", filename); return 0; }
+        if (fread(&ground_truth, sizeof(char), 1, fp) !=1 ) { fprintf(stderr, "Failed to read %s\n", filename); return 0; }
+
+        Candidate candidate = Candidate(label_one, label_two, zpoint, ypoint, xpoint, ground_truth);
+        negative_candidates.push_back(candidate);
+    }
+
+    fclose(fp);
+
+    sprintf(filename, "features/skeleton/%s-%ldnm-undetermined.candidates", prefix, maximum_distance);
+
+    fp = fopen(filename, "rb");
+    if (!fp) { fprintf(stderr, "Failed to read %s\n", filename); return 0; }
+
+    long nundetermineds;
+    if (fread(&nundetermineds, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s\n", filename); return 0; }
+    for (long iv = 0; iv < nundetermineds; ++iv) {
+        long label_one, label_two, zpoint, ypoint, xpoint;
+        char ground_truth;
+        if (fread(&label_one, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s\n", filename); return 0; }
+        if (fread(&label_two, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s\n", filename); return 0; }
+        if (fread(&zpoint, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s\n", filename); return 0; }
+        if (fread(&ypoint, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s\n", filename); return 0; }
+        if (fread(&xpoint, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s\n", filename); return 0; }
+        if (fread(&ground_truth, sizeof(char), 1, fp) !=1 ) { fprintf(stderr, "Failed to read %s\n", filename); return 0; }
+
+        Candidate candidate = Candidate(label_one, label_two, zpoint, ypoint, xpoint, ground_truth);
+        undetermined_candidates.push_back(candidate);
+    }
+
+    fclose(fp);
+
+    candidate = positive_candidates[positive_index];
+
+    return 1;
+}
+
+
+static int
 ReadSkeletonData(void)
 {
+    if (thinning_skeletons) { delete[] thinning_skeletons; thinning_skeletons = NULL; }
+    if (medial_skeletons) { delete[] medial_skeletons; medial_skeletons = NULL; }
+    if (teaser_skeletons) { delete[] teaser_skeletons; teaser_skeletons = NULL; }
+
+    printf("Resolution: (%ld, %ld, %ld)\n", downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z]);
+    printf("  TEASER:\n");
+    printf("    Scale: %ld\n", teaser_scale);
+    printf("    Buffer: %ld\n", teaser_buffer);
+    printf("  Thinning + Medial Axis:\n");
+    printf("    A*: %ld\n", astar_expansion);
+
 
     char input_filename[4096];
-    sprintf(input_filename, "skeletons/%s/thinning-%03ldx%03ldx%03ld-upsample-%02ld-skeleton.pts", prefix, skeleton_resolution[IB_X], skeleton_resolution[IB_Y], skeleton_resolution[IB_Z], astar_expansion);
+    if (benchmark) sprintf(input_filename, "benchmarks/skeleton/%s-thinning-%03ldx%03ldx%03ld-upsample-%02ld-skeleton.pts", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z], astar_expansion);
+    else sprintf(input_filename, "skeletons/%s/thinning-%03ldx%03ldx%03ld-upsample-%02ld-skeleton.pts", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z], astar_expansion);
 
     FILE *fp = fopen(input_filename, "rb");
     long skeleton_maximum_segmentation;
@@ -221,9 +388,9 @@ ReadSkeletonData(void)
         assert (input_grid_size[IB_Z] == grid_size[IB_Z] and input_grid_size[IB_Y] == grid_size[IB_Y] and input_grid_size[IB_X] == grid_size[IB_X]);
         assert (skeleton_maximum_segmentation == maximum_segmentation);
 
-        skeletons = new std::vector<long>[maximum_segmentation];
+        thinning_skeletons = new std::vector<long>[maximum_segmentation];
         for (long iv = 0; iv < maximum_segmentation; ++iv) {
-            skeletons[iv] = std::vector<long>();
+            thinning_skeletons[iv] = std::vector<long>();
 
             long nelements; 
             if (fread(&nelements, sizeof(long), 1, fp) != 1) return 0;
@@ -231,9 +398,63 @@ ReadSkeletonData(void)
                 long element;
                 if (fread(&element, sizeof(long), 1, fp) != 1) return 0;
 
-                skeletons[iv].push_back(element);
+                thinning_skeletons[iv].push_back(element);
             }
         }  
+        fclose(fp);
+    }
+
+    if (benchmark) sprintf(input_filename, "benchmarks/skeleton/%s-medial-axis-%03ldx%03ldx%03ld-upsample-%02ld-skeleton.pts", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z], astar_expansion);
+    else sprintf(input_filename, "skeletons/%s/medial-axis-%03ldx%03ldx%03ld-upsample-%02ld-skeleton.pts", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z], astar_expansion);
+
+    fp = fopen(input_filename, "rb");
+    if (fp) {
+        if (fread(&input_grid_size[IB_Z], sizeof(long), 1, fp) != 1) return 0;
+        if (fread(&input_grid_size[IB_Y], sizeof(long), 1, fp) != 1) return 0;
+        if (fread(&input_grid_size[IB_X], sizeof(long), 1, fp) != 1) return 0;
+        if (fread(&skeleton_maximum_segmentation, sizeof(long), 1, fp) != 1) return 0;
+        assert (input_grid_size[IB_Z] == grid_size[IB_Z] and input_grid_size[IB_Y] == grid_size[IB_Y] and input_grid_size[IB_X] == grid_size[IB_X]);
+        assert (skeleton_maximum_segmentation == maximum_segmentation);
+
+        medial_skeletons = new std::vector<long>[maximum_segmentation];
+        for (long iv = 0; iv < maximum_segmentation; ++iv) {
+            medial_skeletons[iv] = std::vector<long>();
+
+            long nelements;
+            if (fread(&nelements, sizeof(long), 1, fp) != 1) return 0;
+            for (long ie = 0; ie < nelements; ++ie) {
+                long element;
+                if (fread(&element, sizeof(long), 1, fp) != 1) return 0;
+                medial_skeletons[iv].push_back(element);
+            }
+        }
+        fclose(fp);
+    }
+
+    if (benchmark) sprintf(input_filename, "benchmarks/skeleton/%s-teaser-%03ldx%03ldx%03ld-upsample-%02ld-%02ld-00-skeleton.pts", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z], teaser_scale, teaser_buffer);
+    else sprintf(input_filename, "skeletons/%s/teaser-%03ldx%03ldx%03ld-upsample-%02ld-%02ld-00-skeleton.pts", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z], teaser_scale, teaser_buffer);
+
+    fp = fopen(input_filename, "rb");
+    if (fp) {
+        if (fread(&input_grid_size[IB_Z], sizeof(long), 1, fp) != 1) return 0;
+        if (fread(&input_grid_size[IB_Y], sizeof(long), 1, fp) != 1) return 0;
+        if (fread(&input_grid_size[IB_X], sizeof(long), 1, fp) != 1) return 0;
+        if (fread(&skeleton_maximum_segmentation, sizeof(long), 1, fp) != 1) return 0;
+        assert (input_grid_size[IB_Z] == grid_size[IB_Z] and input_grid_size[IB_Y] == grid_size[IB_Y] and input_grid_size[IB_X] == grid_size[IB_X]);
+        assert (skeleton_maximum_segmentation == maximum_segmentation);
+
+        teaser_skeletons = new std::vector<long>[maximum_segmentation];
+        for (long iv = 0; iv < maximum_segmentation; ++iv) {
+            teaser_skeletons[iv] = std::vector<long>();
+
+            long nelements;
+            if (fread(&nelements, sizeof(long), 1, fp) != 1) return 0;
+            for (long ie = 0; ie < nelements; ++ie) {
+                long element;
+                if (fread(&element, sizeof(long), 1, fp) != 1) return 0;
+                teaser_skeletons[iv].push_back(element);
+            }
+        }
         fclose(fp);
     }
 
@@ -249,20 +470,23 @@ static int ReadData(void)
     RNTime start_time;
     start_time.Read();
 
-    R3Grid **gold_grids = RNReadH5File(meta_data.gold_filename, meta_data.gold_dataset);
-    gold_grid = gold_grids[0];
-    delete[] gold_grids;
-
-    R3Grid **rhoana_grids = RNReadH5File(meta_data.rhoana_filename, meta_data.rhoana_dataset);
-    rhoana_grid = rhoana_grids[0];
-    delete[] rhoana_grids;
-
-    grid_size[IB_X] = rhoana_grid->XResolution();
-    grid_size[IB_Y] = rhoana_grid->YResolution();
-    grid_size[IB_Z] = rhoana_grid->ZResolution();
+    if (benchmark) {
+        R3Grid **gold_grids = RNReadH5File(meta_data.gold_filename, meta_data.gold_dataset);
+        grid = gold_grids[0];
+        delete[] gold_grids;
+    }
+    else {
+        R3Grid **rhoana_grids = RNReadH5File(meta_data.rhoana_filename, meta_data.rhoana_dataset);
+        grid = rhoana_grids[0];
+        delete[] rhoana_grids;
+    }
+    
+    grid_size[IB_X] = grid->XResolution();
+    grid_size[IB_Y] = grid->YResolution();
+    grid_size[IB_Z] = grid->ZResolution();
 
     // get the maximum values for each grid
-    maximum_segmentation = (long) (rhoana_grid->Maximum() + 0.5) + 1;
+    maximum_segmentation = (long) (grid->Maximum() + 0.5) + 1;
 
     // print statistics
     if(print_verbose) {
@@ -299,85 +523,9 @@ static long IndicesToIndex(long ix, long iy, long iz)
 
 
 
-static RNRgb Color(unsigned long value)
-{
-    // allow alternating colors
-    value += color_cycle;
-
-    RNScalar red = (RNScalar) (((107 * value) % 700) % 255) / 255.0;
-    RNScalar green = (RNScalar) (((509 * value) % 900) % 255) / 255.0;
-    RNScalar blue = (RNScalar) (((200 * value) % 777) % 255) / 255.0;
-
-    return RNRgb(red, green, blue);
-}
-
-
-
 ////////////////////////////////////////////////////////////////////////
 // Preprocessing functions
 ////////////////////////////////////////////////////////////////////////
-
-static long *Seg2GoldMapping(long *segmentation, long *gold, long nentries, double match_threshold=0.80, double nonzero_threshold=0.40)
-{
-    // find the maximum segmentation value
-    long max_segmentation_value = 0;
-    for (long iv = 0; iv < nentries; ++iv) {
-        if (segmentation[iv] > max_segmentation_value)
-            max_segmentation_value = segmentation[iv];
-    }
-    max_segmentation_value++;
-
-    // find the maximum gold value
-    long max_gold_value = 0;
-    for (long iv = 0; iv < nentries; ++iv) {
-        if (gold[iv] > max_gold_value) 
-            max_gold_value = gold[iv];
-    }
-    max_gold_value++;
-
-    // find the number of voxels per segment
-    nvoxels_per_segment = new long[max_segmentation_value];
-    for (long iv = 0; iv < max_segmentation_value; ++iv)
-        nvoxels_per_segment[iv] = 0;
-    for (long iv = 0; iv < nentries; ++iv)
-        nvoxels_per_segment[segmentation[iv]]++;
-
-    std::unordered_map<long, std::unordered_map<long, long> > seg2gold_overlap = std::unordered_map<long, std::unordered_map<long, long> >();   
-    for (long is = 0; is < max_segmentation_value; ++is) {
-        if (nvoxels_per_segment[is]) seg2gold_overlap.insert(std::pair<long, std::unordered_map<long, long> >(is, std::unordered_map<long, long>()));
-    }
-    
-    for (long iv = 0; iv < nentries; ++iv) {
-        seg2gold_overlap[segmentation[iv]][gold[iv]]++;
-    }
-    
-    // create the mapping
-    long *segmentation_to_gold = new long[max_segmentation_value];
-    for (long is = 0; is < max_segmentation_value; ++is) {
-        if (!nvoxels_per_segment[is]) { segmentation_to_gold[is] = 0; continue; }
-        long gold_id = 0;
-        long gold_max_value = 0;
-
-        // only gets label of 0 if the number of non zero voxels is below threshold
-        for (std::unordered_map<long, long>::iterator iter = seg2gold_overlap[is].begin(); iter != seg2gold_overlap[is].end(); ++iter) {
-            if (not iter->first) continue;
-            if (iter->second > gold_max_value) {
-                gold_max_value = iter->second;
-                gold_id = iter->first;
-            }
-        }
-        
-        // number of non zero pixels must be greater than the nonzero threshold
-        if ((double)(nvoxels_per_segment[is] - seg2gold_overlap[is][0]) / nvoxels_per_segment[is] < nonzero_threshold) segmentation_to_gold[is] = 0;
-        // the number of matching gold values divided by the number of non zero pixels must be greater than the match threshold or it is a merge error
-        else if (gold_max_value / (double)(nvoxels_per_segment[is] - seg2gold_overlap[is][0]) < match_threshold) segmentation_to_gold[is] = -1;
-        else segmentation_to_gold[is] = gold_id;
-    }
-
-    return segmentation_to_gold;
-}
-
-
 
 static void Preprocessing(void)
 {
@@ -389,71 +537,21 @@ static void Preprocessing(void)
     for (long iv = 0; iv < maximum_segmentation; ++iv)
         segmentations[iv] = std::vector<long>();
 
-    long nentries = grid_size[IB_X] * grid_size[IB_Y] * grid_size[IB_Z];
-    long *gold = new long[nentries];
-    long *segmentation = new long[nentries];
-    long max_segmentation_value = 0;
-    long max_gold_value = 0;
-    for (long iv = 0; iv < nentries; ++iv) {
-        long gold_index = (long)(gold_grid->GridValue(iv) + 0.5);
-        long segment_index = (long)(rhoana_grid->GridValue(iv) + 0.5);
-
-        gold[iv] = gold_index;
-        segmentation[iv] = segment_index;
-
-        if (gold[iv] > max_gold_value) max_gold_value = gold[iv];
-        if (segmentation[iv] > max_segmentation_value) max_segmentation_value = segmentation[iv];
-    }
-    max_segmentation_value++;
-    max_gold_value++;
-
-    long *seg2gold = Seg2GoldMapping(segmentation, gold, nentries);
-    for (long is = 0; is < max_segmentation_value; ++is) {
-        if (seg2gold[is] < 0 and nvoxels_per_segment[is] > merge_threshold) merge_errors.push_back(is);
-    }
-
-    std::vector<long> *seg_per_gold = new std::vector<long>[max_gold_value];
-    for (long ig = 0; ig < max_gold_value; ++ig) {
-        seg_per_gold[ig] = std::vector<long>();
-    }
-    for (long is = 0; is < max_segmentation_value; ++is) {
-        if (seg2gold[is] < 1) continue;
-
-        seg_per_gold[seg2gold[is]].push_back(is);
-    }
-    for (long ig = 0; ig < max_gold_value; ++ig) {
-        if (seg_per_gold[ig].size() < 2) continue;
-
-        std::vector<long> split_error = std::vector<long>();
-        for (unsigned long is = 0; is < seg_per_gold[ig].size(); ++is) {
-            split_error.push_back(seg_per_gold[ig][is]);
-        }
-
-        split_errors.push_back(split_error);
-    }
-
-
-    // free memory
-    delete[] gold;
-    delete[] segmentation;
-    delete[] seg2gold;
-    delete[] seg_per_gold;
-
     // go through all voxels to see if it belongs to the boundary
     for (int iz = 1; iz < grid_size[IB_Z] - 1; ++iz) {
         for (int iy = 1; iy < grid_size[IB_Y] - 1; ++iy) {
             for (int ix = 1; ix < grid_size[IB_X] - 1; ++ix) {
                 long iv = IndicesToIndex(ix, iy, iz);
 
-                long segment = (long) (rhoana_grid->GridValue(ix, iy, iz) + 0.5);
+                long segment = (long) (grid->GridValue(ix, iy, iz) + 0.5);
 
                 // go through all six adjacent neighbors
-                if ((long)(rhoana_grid->GridValue(ix - 1, iy, iz) + 0.5) != segment ||
-                    (long)(rhoana_grid->GridValue(ix + 1, iy, iz) + 0.5) != segment ||
-                    (long)(rhoana_grid->GridValue(ix, iy - 1, iz) + 0.5) != segment ||
-                    (long)(rhoana_grid->GridValue(ix, iy + 1, iz) + 0.5) != segment ||
-                    (long)(rhoana_grid->GridValue(ix, iy, iz - 1) + 0.5) != segment ||
-                    (long)(rhoana_grid->GridValue(ix, iy, iz + 1) + 0.5) != segment)
+                if ((long)(grid->GridValue(ix - 1, iy, iz) + 0.5) != segment ||
+                    (long)(grid->GridValue(ix + 1, iy, iz) + 0.5) != segment ||
+                    (long)(grid->GridValue(ix, iy - 1, iz) + 0.5) != segment ||
+                    (long)(grid->GridValue(ix, iy + 1, iz) + 0.5) != segment ||
+                    (long)(grid->GridValue(ix, iy, iz - 1) + 0.5) != segment ||
+                    (long)(grid->GridValue(ix, iy, iz + 1) + 0.5) != segment)
                 {
                     segmentations[segment].push_back(iv);
                 }
@@ -465,8 +563,6 @@ static void Preprocessing(void)
         printf("Preprocessing...\n");
         printf("  Time = %0.2f seconds\n", start_time.Elapsed());
         printf("  Maximum Segment = %ld\n", maximum_segmentation);
-        printf("  Split Errors = %ld\n", split_errors.size());
-        printf("  Merge Error = %ld\n", merge_errors.size());
     }
 }
 
@@ -480,7 +576,6 @@ static void DrawSegment(int segment_index)
 {
     transformation.Push();
 
-    glPointSize(1.0);
     glBegin(GL_POINTS);
     for (unsigned int iv = 0; iv < segmentations[segment_index].size(); ++iv) {
         // faster rendering with downsampling
@@ -500,6 +595,11 @@ static void DrawSegment(int segment_index)
 
 static void DrawSkeleton(int segment_index)
 {
+    std::vector<long> *skeletons;
+    if (skeleton_type == 0) skeletons = thinning_skeletons;
+    else if (skeleton_type == 1) skeletons = medial_skeletons;
+    else if (skeleton_type == 2) skeletons = teaser_skeletons;
+    else return;
     if (!skeletons) return;
 
     // sizes for skeleton joints
@@ -556,8 +656,7 @@ void GLUTStop(void)
     RNTime start_time;
     start_time.Read();
 
-    if (gold_grid) delete gold_grid;
-    if (rhoana_grid) delete rhoana_grid;
+    if (grid) delete grid;
 
     // print statistics
     if(print_verbose) {
@@ -597,25 +696,28 @@ void GLUTRedraw(void)
         world_box.Outline();
     }
 
-    if (show_merge_errors) {
-        long segment_index = merge_errors[merge_index];
+    // draw machine labels and skeletons
+    glPointSize(1);
+    if (show_positives) RNLoadRgb(RNgreen_rgb);
+    else if (show_negatives) RNLoadRgb(RNred_rgb);
+    else RNLoadRgb(RNcyan_rgb);
+    DrawSegment(candidate.label_one);
+    RNLoadRgb(RNRgb(1.0 - background_color[0], 1.0 - background_color[1], 1.0 - background_color[2]));
+    DrawSkeleton(candidate.label_one);
 
-        RNLoadRgb(Color(segment_index));
-        DrawSegment(segment_index);
-        RNLoadRgb(RNRgb(1.0 - background_color[0], 1.0 - background_color[1], 1.0 - background_color[2]));
-        if (show_skeletons) DrawSkeleton(segment_index);
-    }
-    else {
-        for (unsigned long iv = 0; iv < split_errors[split_index].size(); ++iv) {
-            long segment_index = split_errors[split_index][iv];
+    if (show_positives) RNLoadRgb(RNblue_rgb);
+    else if (show_negatives) RNLoadRgb(RNyellow_rgb);
+    else RNLoadRgb(RNmagenta_rgb);
+    DrawSegment(candidate.label_two);
+    RNLoadRgb(RNRgb(1.0 - background_color[0], 1.0 - background_color[1], 1.0 - background_color[2]));
+    DrawSkeleton(candidate.label_two);
 
-            RNLoadRgb(RNRgb(1.0 - background_color[0], 1.0 - background_color[1], 1.0 - background_color[2]));
-            if (show_skeletons) DrawSkeleton(segment_index);
 
-            RNLoadRgb(Color(segment_index));
-            DrawSegment(segment_index);
-        }
-    }
+    long midz = candidate.zpoint * resolution[IB_Z];
+    long midy = candidate.ypoint * resolution[IB_Y];
+    long midx = candidate.xpoint * resolution[IB_X];
+
+    R3Box(R3Point(midx - network_radius[IB_X], midy - network_radius[IB_Y], midz - network_radius[IB_Z]), R3Point(midx + network_radius[IB_X], midy + network_radius[IB_Y], midz + network_radius[IB_Z])).Outline();
 
 
     // epilogue
@@ -713,30 +815,52 @@ void GLUTSpecial(int key, int x, int y)
 
     switch(key) {
         case GLUT_KEY_LEFT: {
-            if (show_merge_errors) {
-                --merge_index;
-                if (merge_index < 0) merge_index = 0;
-                printf("Merge Error: %ld\n", merge_errors[merge_index]);
+            if (show_positives) {
+                --positive_index;
+                if (positive_index < 0) 
+                    positive_index = 0;
+                candidate = positive_candidates[positive_index];
+            }
+            else if (show_negatives) {
+                --negative_index;
+                if (negative_index < 0)
+                    negative_index = 0;
+                candidate = negative_candidates[negative_index];
             }
             else {
-                --split_index;
-                if (split_index < 0) split_index = 0;
+                --undetermined_index;
+                if (undetermined_index < 0) 
+                    undetermined_index = 0;
+                candidate = undetermined_candidates[undetermined_index];
             }
 
+            printf("Labels: %ld %ld\n", candidate.label_one, candidate.label_two);
+            
             break;
         }
 
         case GLUT_KEY_RIGHT: {
-            if (show_merge_errors) {
-                ++merge_index;
-                if ((unsigned long)merge_index > merge_errors.size() - 1) merge_index = merge_errors.size() - 1;
-                printf("Merge Error: %ld\n", merge_errors[merge_index]);
+            if (show_positives) {
+                ++positive_index;
+                if (positive_index > (long)positive_candidates.size() - 1)
+                    positive_index = positive_candidates.size() - 1;
+                candidate = positive_candidates[positive_index];
+            }            
+            else if (show_negatives) {
+                ++negative_index;
+                if (negative_index > (long)negative_candidates.size() - 1)
+                    negative_index = negative_candidates.size() - 1;
+                candidate = negative_candidates[negative_index];
             }
             else {
-                ++split_index;
-                if ((unsigned long)split_index > split_errors.size() - 1) split_index = split_errors.size() - 1;
+                ++undetermined_index;
+                if (undetermined_index > (long)undetermined_candidates.size() - 1)
+                    undetermined_index = undetermined_candidates.size() - 1;
+                candidate = undetermined_candidates[undetermined_index];
             }
 
+            printf("Labels: %ld %ld\n", candidate.label_one, candidate.label_two);
+            
             break;    
         }
     }
@@ -761,6 +885,17 @@ void GLUTKeyboard(unsigned char key, int x, int y)
 
     // keys regardless of projection status
     switch(key) {
+        case 'A':
+        case 'a': {
+            astar_expansion_index = (astar_expansion_index + 1) % nastar_expansions;
+
+            astar_expansion = astar_expansions[astar_expansion_index];
+
+            ReadSkeletonData();
+
+            break;
+        }
+
         case 'B':
         case 'b': {
             show_bbox = 1 - show_bbox;
@@ -775,19 +910,81 @@ void GLUTKeyboard(unsigned char key, int x, int y)
 
         case 'K':
         case 'k': {
-            show_skeletons = 1 - show_skeletons;
+            skeleton_type = (skeleton_type + 1) % nskeleton_opts;
+
+            if (skeleton_type == 0) {
+                printf("Thinning\n");
+                printf("  A*: %0.2lf\n", astar_expansion / 10.0);
+            }
+            else if (skeleton_type == 1) {
+                printf("Medial Axis\n");
+                printf("  A*: %0.2lf\n", astar_expansion / 10.0);
+            }
+            else if (skeleton_type == 2) {
+                printf("TEASER:\n");
+                printf("  Scale: %0.2lf\n", teaser_scale / 10.0);
+                printf("  Buffer: %ld\n", teaser_buffer);
+            }
+
             break;
         }
 
-        case 'M': 
-        case 'm' : {
-            show_merge_errors = 1 - show_merge_errors;
-            printf("Merge Error: %ld\n", merge_errors[merge_index]);
+        case 'N':
+        case 'n': {
+            show_positives = 0;
+            show_negatives = 1;
             break;
         }
 
         case 'P':
         case 'p': {
+            show_positives = 1;
+            show_negatives = 0;
+            break;
+        }
+
+        case 'R': 
+        case 'r': {
+            resolution_index = (resolution_index + 1) % nresolutions;
+            
+            downsample_resolution = resolutions[resolution_index];
+
+            ReadSkeletonData();
+
+            break;
+        }
+
+        case 'S': 
+        case 's': {
+            teaser_scale_index = (teaser_scale_index + 1) % nteaser_scales;
+
+            teaser_scale = teaser_scales[teaser_scale_index];
+
+            ReadSkeletonData();
+
+            break;
+        }
+
+        case 'T': 
+        case 't': {
+            teaser_buffer_index = (teaser_buffer_index + 1) % nteaser_buffers;
+
+            teaser_buffer = teaser_buffers[teaser_buffer_index];
+
+            ReadSkeletonData();
+
+            break;
+        }
+
+        case 'U':
+        case 'u': {
+            show_positives = 0;
+            show_negatives = 0;
+            break;
+        }
+
+        case 'V':
+        case 'v': {
             const R3Camera &camera = viewer->Camera();
             printf("Camera:\n");
             printf("  Origin:  (%lf, %lf, %lf)\n", camera.Origin().X(), camera.Origin().Y(), camera.Origin().Z());
@@ -928,6 +1125,8 @@ static int ParseArgs(int argc, char** argv)
         if((*argv)[0] == '-') {
             if (!strcmp(*argv, "-v")) print_verbose = 1;
             else if (!strcmp(*argv, "-debug")) print_debug = 1;
+            else if (!strcmp(*argv, "-benchmark")) benchmark = 1;
+            else if (!strcmp(*argv, "-maximum_distance")) maximum_distance = atoi(*argv);
             else { fprintf(stderr, "Invalid program argument: %s\n", *argv); return 0; }
         } else {
             if (!prefix) prefix = *argv;
@@ -964,6 +1163,7 @@ int main(int argc, char** argv)
     if (!ReadMetaData(prefix)) exit(-1);
     if (!ReadData()) exit(-1);
     if (!ReadSkeletonData()) exit(-1);
+    if (!ReadCandidates()) exit(-1);
 
     // get all of the preprocessing time
     Preprocessing();

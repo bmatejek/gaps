@@ -1002,7 +1002,6 @@ int main(int argc, char** argv)
 
     // to start with different viewer add command here and recompile
 
-
     // run GLUT interface
     GLUTMainLoop();
 

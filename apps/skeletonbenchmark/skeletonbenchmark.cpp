@@ -22,6 +22,14 @@
 #define SPACEBAR 32
 #define DELETE 127
 
+
+// useful constants
+
+static const int IB_X = 2;
+static const int IB_Y = 1;
+static const int IB_Z = 0;
+
+
 // class declarations
 
 struct RNMeta;
@@ -139,7 +147,7 @@ ReadMetaData(const char *prefix)
 
     // read in requisite information
     if (!fgets(comment, 4096, fp)) return 0;
-    if (fscanf(fp, "%dx%dx%d\n", &(meta_data.resolution[RN_X]), &(meta_data.resolution[RN_Y]), &(meta_data.resolution[RN_Z])) != 3) return 0;
+    if (fscanf(fp, "%dx%dx%d\n", &(meta_data.resolution[IB_X]), &(meta_data.resolution[IB_Y]), &(meta_data.resolution[IB_Z])) != 3) return 0;
     
     // skip affinities
     if (!fgets(comment, 4096, fp)) return 0;
@@ -229,16 +237,16 @@ static int ReadData(void)
     gold_grid = gold_grids[0];
     delete[] gold_grids;
 
-    grid_size[RN_X] = gold_grid->XResolution();
-    grid_size[RN_Y] = gold_grid->YResolution();
-    grid_size[RN_Z] = gold_grid->ZResolution();
+    grid_size[IB_X] = gold_grid->XResolution();
+    grid_size[IB_Y] = gold_grid->YResolution();
+    grid_size[IB_Z] = gold_grid->ZResolution();
 
     // print statistics
     if(print_verbose) {
         printf("Read voxel grids...\n");
         printf("  Time = %.2f seconds\n", start_time.Elapsed());
         printf("  Grid Size = (%d %d %d)\n", gold_grid->XResolution(), gold_grid->YResolution(), gold_grid->ZResolution());
-        printf("  Resolution = (%0.2lf %0.2lf %0.2lf)\n", resolution[RN_X], resolution[RN_Y], resolution[RN_Z]);
+        printf("  Resolution = (%0.2lf %0.2lf %0.2lf)\n", resolution[IB_X], resolution[IB_Y], resolution[IB_Z]);
     }
 
     // return success
@@ -276,16 +284,16 @@ static int ReadLargestSegments(void)
 static void IndexToIndices(long index, long& ix, long& iy, long& iz)
 {
   // Set indices of grid value at index
-  iz = index / (grid_size[RN_X] * grid_size[RN_Y]);
-  iy = (index - iz * grid_size[RN_X] * grid_size[RN_Y]) / grid_size[RN_X];
-  ix = index % grid_size[RN_X];
+  iz = index / (grid_size[IB_X] * grid_size[IB_Y]);
+  iy = (index - iz * grid_size[IB_X] * grid_size[IB_Y]) / grid_size[IB_X];
+  ix = index % grid_size[IB_X];
 }
 
 
 
 static long IndicesToIndex(long ix, long iy, long iz)
 {
-    return iz * grid_size[RN_X] * grid_size[RN_Y] + iy * grid_size[RN_X] + ix;
+    return iz * grid_size[IB_X] * grid_size[IB_Y] + iy * grid_size[IB_X] + ix;
 }
 
 
@@ -322,9 +330,9 @@ static void Preprocessing(void)
         golds[iv] = std::vector<long>();
 
     // go through all voxels to see if it belongs to the boundary
-    for (int iz = 1; iz < grid_size[RN_Z] - 1; ++iz) {
-        for (int iy = 1; iy < grid_size[RN_Y] - 1; ++iy) {
-            for (int ix = 1; ix < grid_size[RN_X] - 1; ++ix) {
+    for (int iz = 1; iz < grid_size[IB_Z] - 1; ++iz) {
+        for (int iy = 1; iy < grid_size[IB_Y] - 1; ++iy) {
+            for (int ix = 1; ix < grid_size[IB_X] - 1; ++ix) {
                 long iv = IndicesToIndex(ix, iy, iz);
 
                 long gold = (long) (gold_grid->GridValue(ix, iy, iz) + 0.5);
@@ -357,16 +365,14 @@ static void Preprocessing(void)
 
 static void DrawEndpoints()
 {
-    glPointSize(10.0);
-    glBegin(GL_POINTS);
+    static const double endpoint_size = 60.0;
+
     RNLoadRgb(RNRgb(not background_color[0], not background_color[1], not background_color[2]));
     for (unsigned long ie = 0; ie < skeleton_endpoints.size(); ++ie) {
         R3Point endpoint = skeleton_endpoints[ie];
-        glVertex3f(endpoint.X(), endpoint.Y(), endpoint.Z());
+        endpoint = R3Point(endpoint.X() * resolution[IB_X], endpoint.Y() * resolution[IB_Y], endpoint.Z() * resolution[IB_Z]);
+        R3Sphere(endpoint, endpoint_size).Draw();
     }
-    glEnd();
-    glPointSize(1.0);
-
 }
 
 
@@ -395,10 +401,12 @@ static void DrawPointClouds(void)
 
     RNLoadRgb(Color(gold_index));
     DrawGold(gold_index);
-    DrawEndpoints();
 
-    // pop the transformation
+    // pop the transformation before drawing endpoints
     transformation.Pop();
+
+
+    DrawEndpoints();
 }
 
 
@@ -707,7 +715,7 @@ void GLUTKeyboard(unsigned char key, int x, int y)
                 long deltay = (long) (closest_point.Y() - iy + 0.5);
                 long deltax = (long) (closest_point.X() - ix + 0.5);
 
-                RNScalar normalized_distance = sqrt(resolution[RN_Z] * resolution[RN_Z] * deltaz * deltaz + resolution[RN_Y] * resolution[RN_Y] * deltay * deltay + resolution[RN_X] * resolution[RN_X] * deltax * deltax);
+                RNScalar normalized_distance = sqrt(resolution[IB_Z] * resolution[IB_Z] * deltaz * deltaz + resolution[IB_Y] * resolution[IB_Y] * deltay * deltay + resolution[IB_X] * resolution[IB_X] * deltax * deltax);
                 if (normalized_distance < buffer) continue;
 
                 if (distance < closest_distance) {
@@ -754,6 +762,30 @@ void GLUTKeyboard(unsigned char key, int x, int y)
             break;
 
         }
+
+
+        case 'P':
+        case 'p': {
+            const R3Camera &camera = viewer->Camera();
+            printf("Camera:\n");
+            printf("  Origin:  (%lf, %lf, %lf)\n", camera.Origin().X(), camera.Origin().Y(), camera.Origin().Z());
+            printf("  Towards: (%lf, %lf, %lf)\n", camera.Towards().X(), camera.Towards().Y(), camera.Towards().Z());
+            printf("  Up:      (%lf, %lf, %lf)\n", camera.Up().X(), camera.Up().Y(), camera.Up().Z());
+            printf("  XFOV:    %lf\n", camera.XFOV());
+            printf("  YFOV:    %lf\n", camera.YFOV());
+            printf("  Near:    %lf\n", camera.Near());
+            printf("  Far:     %lf\n", camera.Far());
+            const R2Viewport &viewport = viewer->Viewport();
+            printf("Viewport:\n");
+            printf("  XMin:    %d\n", viewport.XMin());
+            printf("  YMin:    %d\n", viewport.YMin());
+            printf("  Width:   %d\n", viewport.Width());
+            printf("  Height:  %d\n", viewport.Height());
+            printf("viewer = new R3Viewer(R3Camera(R3Point(%lf, %lf, %lf), R3Vector(%lf, %lf, %lf), R3Vector(%lf, %lf, %lf), %lf, %lf, %lf, %lf), R2Viewport(%d, %d, %d, %d));\n", camera.Origin().X(), camera.Origin().Y(), camera.Origin().Z(), 
+                camera.Towards().X(), camera.Towards().Y(), camera.Towards().Z(), camera.Up().X(), camera.Up().Y(), camera.Up().Z(), camera.XFOV(), camera.YFOV(), camera.Near(), camera.Far(), viewport.XMin(), viewport.YMin(), viewport.Width(), viewport.Height());
+            break;
+        }
+
 
         case ENTER: {
             background_color[0] = 1.0 - background_color[0];
@@ -925,10 +957,10 @@ int main(int argc, char** argv)
     Preprocessing();
 
     // set world box
-    world_box = R3Box(0, 0, 0, resolution[RN_X] * grid_size[RN_X], resolution[RN_Y] * grid_size[RN_Y], resolution[RN_Z] * grid_size[RN_Z]);
+    world_box = R3Box(0, 0, 0, resolution[IB_X] * grid_size[IB_X], resolution[IB_Y] * grid_size[IB_Y], resolution[IB_Z] * grid_size[IB_Z]);
 
     // get the transformation
-    transformation = R3Affine(R4Matrix(resolution[RN_X], 0, 0, 0, 0, resolution[RN_Y], 0, 0, 0, 0, resolution[RN_Z], 0, 0, 0, 0, 1));
+    transformation = R3Affine(R4Matrix(resolution[IB_X], 0, 0, 0, 0, resolution[IB_Y], 0, 0, 0, 0, resolution[IB_Z], 0, 0, 0, 0, 1));
 
     // create viewer
     viewer = CreateViewer();

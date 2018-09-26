@@ -20,6 +20,7 @@ target:
 	cd 2dview; $(MAKE) $(TARGET)
 	cd 3dview; $(MAKE) $(TARGET)
 	cd downsampleview; $(MAKE) $(TARGET)
+	cd edgeview; $(MAKE) $(TARGET)
 	cd errorview; $(MAKE) $(TARGET)
 	cd overlay; $(MAKE) $(TARGET)
 	cd segmentlists; $(MAKE) $(TARGET)
