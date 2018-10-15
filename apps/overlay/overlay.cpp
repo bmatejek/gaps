@@ -29,7 +29,7 @@ static int GLUTmodifiers = 0;
 
 // grid viewing variables
 
-static double alpha = 0.40;
+static double alpha = 0.70;
 static R3Grid *image_grid = NULL;
 static R3Grid *segment_grid = NULL;
 
