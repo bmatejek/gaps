@@ -101,6 +101,7 @@ static int show_skeletons = 0;
 // display variables
 
 static const int ncolor_opts = 6;
+static int show_vectors = 1;
 static int show_bbox = 1;
 static RNScalar downsample_rate = 2.0;
 static int color_cycle = 0;
@@ -108,6 +109,7 @@ static int color_cycle = 0;
 // variables that enable cycling through skeletons
 static long skeleton_resolution[3] = { 80, 80, 80 };
 static long astar_expansion = 0;
+static std::unordered_map<long, R3Vector> *endpoint_vectors = NULL;
 
 
 ////////////////////////////////////////////////////////////////////////
@@ -126,6 +128,7 @@ struct RNMeta {
     char mask_dataset[128];
     char rhoana_filename[4096];
     char rhoana_dataset[128];
+    long grid_size[3];
     R3Box world_box;
     R3Box scaled_box;
 };
@@ -191,6 +194,11 @@ ReadMetaData(const char *prefix)
     // skip world box
     if (!fgets(comment, 4096, fp)) return 0;
     if (!fgets(comment, 4096, fp)) return 0;
+
+    // read in requisite information
+    if (!fgets(comment, 4096, fp)) return 0;
+    if (fscanf(fp, "%ldx%ldx%ld\n", &(meta_data.grid_size[IB_X]), &(meta_data.grid_size[IB_Y]), &(meta_data.grid_size[IB_Z])) != 3) return 0;
+
     meta_data.world_box = R3null_box;
     meta_data.scaled_box = R3null_box;
 
@@ -206,6 +214,9 @@ ReadMetaData(const char *prefix)
 static int
 ReadSkeletonData(void)
 {
+
+    if (skeletons) delete[] skeletons;
+    if (endpoint_vectors) delete[] endpoint_vectors;
 
     char input_filename[4096];
     sprintf(input_filename, "skeletons/%s/thinning-%03ldx%03ldx%03ld-upsample-%02ld-skeleton.pts", prefix, skeleton_resolution[IB_X], skeleton_resolution[IB_Y], skeleton_resolution[IB_Z], astar_expansion);
@@ -234,6 +245,41 @@ ReadSkeletonData(void)
                 skeletons[iv].push_back(element);
             }
         }  
+        fclose(fp);
+    }
+
+    if (astar_expansion) return 1;
+
+    sprintf(input_filename, "skeletons/%s/thinning-%03ldx%03ldx%03ld-endpoint-vectors.vec", prefix, skeleton_resolution[IB_X], skeleton_resolution[IB_Y], skeleton_resolution[IB_Z]);
+
+    fp = fopen(input_filename, "rb");
+    if (fp) {
+        if (fread(&input_grid_size[IB_Z], sizeof(long), 1, fp) != 1) return 0;
+        if (fread(&input_grid_size[IB_Y], sizeof(long), 1, fp) != 1) return 0;
+        if (fread(&input_grid_size[IB_X], sizeof(long), 1, fp) != 1) return 0;
+        if (fread(&skeleton_maximum_segmentation, sizeof(long), 1, fp) != 1) return 0;
+        assert (input_grid_size[IB_Z] == grid_size[IB_Z] and input_grid_size[IB_Y] == grid_size[IB_Y] and input_grid_size[IB_X] == grid_size[IB_X]);
+        assert (skeleton_maximum_segmentation == maximum_segmentation);
+
+        endpoint_vectors = new std::unordered_map<long, R3Vector>[maximum_segmentation];
+        for (long is = 0; is < maximum_segmentation; ++is)
+            endpoint_vectors[is] = std::unordered_map<long, R3Vector>();
+  
+        for (long is = 0; is < maximum_segmentation; ++is) {
+            long nendpoints;
+            if (fread(&nendpoints, sizeof(long), 1, fp) != 1) return 0;
+            for (long ie = 0; ie < nendpoints; ++ie) {
+                long endpoint;
+                double vx, vy, vz;
+                if (fread(&endpoint, sizeof(long), 1, fp) != 1) return 0;
+                if (fread(&vz, sizeof(double), 1, fp) != 1) return 0;
+                if (fread(&vy, sizeof(double), 1, fp) != 1) return 0;
+                if (fread(&vx, sizeof(double), 1, fp) != 1) return 0;
+
+                endpoint_vectors[is][endpoint] = R3Vector(vx, vy, vz);
+            }
+        }      
+
         fclose(fp);
     }
 
@@ -503,8 +549,10 @@ static void DrawSkeleton(int segment_index)
     if (!skeletons) return;
 
     // sizes for skeleton joints
-    double joint_size = 3;
-    double endpoint_size = 60;
+    const double joint_size = 3;
+    const double endpoint_size = 60;
+    const double line_size = 2;
+    const double line_length = 250;
 
     transformation.Push();
 
@@ -538,6 +586,27 @@ static void DrawSkeleton(int segment_index)
         iz = resolution[IB_Z] * iz;
 
         R3Sphere(R3Point(ix, iy, iz), endpoint_size).Draw();
+
+        if (show_vectors) {
+            // draw the vector if it exists
+            glLineWidth(line_size);
+            if (endpoint_vectors) {
+                R3Vector scaled_vector = endpoint_vectors[segment_index][iv];
+                
+                // scale vector to these coordinates
+                R3Vector vector = R3Vector(scaled_vector.X() * resolution[IB_X], scaled_vector.Y() * resolution[IB_Y], scaled_vector.Z() * resolution[IB_Z]);
+                vector.Normalize();
+                
+                // draw line
+                glBegin(GL_LINES);
+                glVertex3f(ix, iy, iz);
+                glVertex3f(ix + line_length * vector.X(), iy + line_length * vector.Y(), iz + line_length * vector.Z());
+                glEnd();
+
+                R3Sphere(R3Point(ix, iy, iz) + line_length * vector, endpoint_size / 2.0).Draw();
+            }
+            glLineWidth(1.0);
+        }
     }
 }
 
@@ -805,6 +874,12 @@ void GLUTKeyboard(unsigned char key, int x, int y)
             printf("  Height:  %d\n", viewport.Height());
             printf("viewer = new R3Viewer(R3Camera(R3Point(%lf, %lf, %lf), R3Vector(%lf, %lf, %lf), R3Vector(%lf, %lf, %lf), %lf, %lf, %lf, %lf), R2Viewport(%d, %d, %d, %d));\n", camera.Origin().X(), camera.Origin().Y(), camera.Origin().Z(), 
                 camera.Towards().X(), camera.Towards().Y(), camera.Towards().Z(), camera.Up().X(), camera.Up().Y(), camera.Up().Z(), camera.XFOV(), camera.YFOV(), camera.Near(), camera.Far(), viewport.XMin(), viewport.YMin(), viewport.Width(), viewport.Height());
+            break;
+        }
+
+        case 'V':
+        case 'v': {
+            show_vectors = 1 - show_vectors;
             break;
         }
 
