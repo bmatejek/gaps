@@ -13,6 +13,7 @@
 #include <map>
 #include <set>
 #include <algorithm>
+#include <unordered_map>
 
 
 // GLUT defines
@@ -99,6 +100,7 @@ static const int nteaser_buffers = 5;
 static const int nastar_expansions = 9;
 static const int nresolutions = 18;
 
+static int show_vectors = 1;
 static int show_bbox = 1;
 static int segmentation_index = 1;
 static int skeleton_type = 0;
@@ -139,6 +141,9 @@ static long teaser_scale = teaser_scales[teaser_scale_index];
 static long teaser_buffer = teaser_buffers[teaser_buffer_index];
 static long *downsample_resolution = resolutions[resolution_index];
 
+static std::unordered_map<long, R3Vector> *thinning_endpoint_vectors = NULL;
+static std::unordered_map<long, R3Vector> *medial_endpoint_vectors = NULL;
+
 
 
 ////////////////////////////////////////////////////////////////////////
@@ -157,6 +162,7 @@ struct RNMeta {
     char mask_dataset[128];
     char rhoana_filename[4096];
     char rhoana_dataset[128];
+    long grid_size[3];
     R3Box world_box;
     R3Box scaled_box;
 };
@@ -215,13 +221,18 @@ ReadMetaData(const char *prefix)
     if (!fgets(comment, 4096, fp)) return 0;
     if (!fgets(comment, 4096, fp)) return 0;
 
+    // skip world box
+    if (!fgets(comment, 4096, fp)) return 0;
+    if (!fgets(comment, 4096, fp)) return 0;
+
+    // read in requisite information
+    if (!fgets(comment, 4096, fp)) return 0;
+    if (fscanf(fp, "%ldx%ldx%ld\n", &(meta_data.grid_size[IB_X]), &(meta_data.grid_size[IB_Y]), &(meta_data.grid_size[IB_Z])) != 3) return 0;
+
     // update the global resolution
     for (int dim = 0; dim <= 2; ++dim)
         resolution[dim] = meta_data.resolution[dim];
 
-    // skip world box
-    if (!fgets(comment, 4096, fp)) return 0;
-    if (!fgets(comment, 4096, fp)) return 0;
     meta_data.world_box = R3null_box;
     meta_data.scaled_box = R3null_box;
 
@@ -331,6 +342,76 @@ ReadSkeletonData(void)
                 teaser_skeletons[iv].push_back(element);
             }
         }
+        fclose(fp);
+    }
+
+    if (astar_expansion) return 1;
+
+    if (benchmark) sprintf(input_filename, "benchmarks/skeleton/%s-thinning-%03ldx%03ldx%03ld-endpoint-vectors.vec", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z]);
+    else sprintf(input_filename, "skeletons/%s/thinning-%03ldx%03ldx%03ld-endpoint-vectors.vec", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z]);
+
+    fp = fopen(input_filename, "rb");
+    if (fp) {
+        if (fread(&input_grid_size[IB_Z], sizeof(long), 1, fp) != 1) return 0;
+        if (fread(&input_grid_size[IB_Y], sizeof(long), 1, fp) != 1) return 0;
+        if (fread(&input_grid_size[IB_X], sizeof(long), 1, fp) != 1) return 0;
+        if (fread(&skeleton_maximum_segmentation, sizeof(long), 1, fp) != 1) return 0;
+        assert (input_grid_size[IB_Z] == grid_size[IB_Z] and input_grid_size[IB_Y] == grid_size[IB_Y] and input_grid_size[IB_X] == grid_size[IB_X]);
+        assert (skeleton_maximum_segmentation == maximum_segmentation);
+
+        thinning_endpoint_vectors = new std::unordered_map<long, R3Vector>[maximum_segmentation];
+        for (long is = 0; is < maximum_segmentation; ++is)
+            thinning_endpoint_vectors[is] = std::unordered_map<long, R3Vector>();
+
+        for (long is = 0; is < maximum_segmentation; ++is) {
+            long nendpoints;
+            if (fread(&nendpoints, sizeof(long), 1, fp) != 1) return 0;
+            for (long ie = 0; ie < nendpoints; ++ie) {
+                long endpoint;
+                double vx, vy, vz;
+                if (fread(&endpoint, sizeof(long), 1, fp) != 1) return 0;
+                if (fread(&vz, sizeof(double), 1, fp) != 1) return 0;
+                if (fread(&vy, sizeof(double), 1, fp) != 1) return 0;
+                if (fread(&vx, sizeof(double), 1, fp) != 1) return 0;
+
+                thinning_endpoint_vectors[is][endpoint] = R3Vector(vx, vy, vz);
+            }
+        }
+
+        fclose(fp);
+    }
+
+    if (benchmark) sprintf(input_filename, "benchmarks/skeleton/%s-medial-axis-%03ldx%03ldx%03ld-endpoint-vectors.vec", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z]);
+    else sprintf(input_filename, "skeletons/%s/medial-axis-%03ldx%03ldx%03ld-endpoint-vectors.vec", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z]);
+
+    fp = fopen(input_filename, "rb");
+    if (fp) {
+        if (fread(&input_grid_size[IB_Z], sizeof(long), 1, fp) != 1) return 0;
+        if (fread(&input_grid_size[IB_Y], sizeof(long), 1, fp) != 1) return 0;
+        if (fread(&input_grid_size[IB_X], sizeof(long), 1, fp) != 1) return 0;
+        if (fread(&skeleton_maximum_segmentation, sizeof(long), 1, fp) != 1) return 0;
+        assert (input_grid_size[IB_Z] == grid_size[IB_Z] and input_grid_size[IB_Y] == grid_size[IB_Y] and input_grid_size[IB_X] == grid_size[IB_X]);
+        assert (skeleton_maximum_segmentation == maximum_segmentation);
+
+        medial_endpoint_vectors = new std::unordered_map<long, R3Vector>[maximum_segmentation];
+        for (long is = 0; is < maximum_segmentation; ++is)
+            medial_endpoint_vectors[is] = std::unordered_map<long, R3Vector>();
+  
+        for (long is = 0; is < maximum_segmentation; ++is) {
+            long nendpoints;
+            if (fread(&nendpoints, sizeof(long), 1, fp) != 1) return 0;
+            for (long ie = 0; ie < nendpoints; ++ie) {
+                long endpoint;
+                double vx, vy, vz;
+                if (fread(&endpoint, sizeof(long), 1, fp) != 1) return 0;
+                if (fread(&vz, sizeof(double), 1, fp) != 1) return 0;
+                if (fread(&vy, sizeof(double), 1, fp) != 1) return 0;
+                if (fread(&vx, sizeof(double), 1, fp) != 1) return 0;
+
+                medial_endpoint_vectors[is][endpoint] = R3Vector(vx, vy, vz);
+            }
+        }      
+
         fclose(fp);
     }
 
@@ -492,9 +573,15 @@ static void DrawSkeleton(int segment_index)
     else return;
     if (!skeletons) return;
 
+    std::unordered_map<long, R3Vector> *endpoint_vectors = NULL;
+    if (skeleton_type == 0) endpoint_vectors = thinning_endpoint_vectors;
+    else if (skeleton_type == 1) endpoint_vectors = medial_endpoint_vectors;
+
     // sizes for skeleton joints
-    double joint_size = 3;
-    double endpoint_size = 60;
+    const double joint_size = 3;
+    const double endpoint_size = 60;
+    const double line_size = 2;
+    const double line_length = 250;
 
     transformation.Push();
 
@@ -528,6 +615,27 @@ static void DrawSkeleton(int segment_index)
         iz = resolution[IB_Z] * iz;
 
         R3Sphere(R3Point(ix, iy, iz), endpoint_size).Draw();
+
+        if (show_vectors) {
+            // draw the vector if it exists
+            glLineWidth(line_size);
+            if (endpoint_vectors) {
+                R3Vector scaled_vector = endpoint_vectors[segment_index][iv];
+                
+                // scale vector to these coordinates
+                R3Vector vector = R3Vector(scaled_vector.X() * resolution[IB_X], scaled_vector.Y() * resolution[IB_Y], scaled_vector.Z() * resolution[IB_Z]);
+                vector.Normalize();
+                
+                // draw line
+                glBegin(GL_LINES);
+                glVertex3f(ix, iy, iz);
+                glVertex3f(ix + line_length * vector.X(), iy + line_length * vector.Y(), iz + line_length * vector.Z());
+                glEnd();
+
+                R3Sphere(R3Point(ix, iy, iz) + line_length * vector, endpoint_size / 2.0).Draw();
+            }
+            glLineWidth(1.0);
+        }
     }
 }
 
@@ -825,6 +933,12 @@ void GLUTKeyboard(unsigned char key, int x, int y)
             break;
         }
 
+        case 'V': 
+        case 'v': {
+            show_vectors = 1 - show_vectors;
+            break;
+        }
+
 
         case ENTER: {
             background_color[0] = 1.0 - background_color[0];
@@ -947,6 +1061,7 @@ static int ParseArgs(int argc, char** argv)
             if (!strcmp(*argv, "-v")) print_verbose = 1;
             else if (!strcmp(*argv, "-debug")) print_debug = 1;
             else if (!strcmp(*argv, "-benchmark")) benchmark = 1;
+            else if (!strcmp(*argv, "-start_index")) { argv++; argc--; segmentation_index = atoi(*argv); }
             else { fprintf(stderr, "Invalid program argument: %s\n", *argv); return 0; }
         } else {
             if (!prefix) prefix = *argv;
@@ -986,6 +1101,9 @@ int main(int argc, char** argv)
 
     // get all of the preprocessing time
     Preprocessing();
+
+    if (segmentation_index < 0) segmentation_index = 0;
+    if (segmentation_index > maximum_segmentation - 1) segmentation_index = maximum_segmentation - 1;
 
     // set world box
     world_box = R3Box(0, 0, 0, resolution[IB_X] * grid_size[IB_X], resolution[IB_Y] * grid_size[IB_Y], resolution[IB_Z] * grid_size[IB_Z]);
