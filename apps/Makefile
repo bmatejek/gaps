@@ -22,6 +22,8 @@ target:
 	cd downsampleview; $(MAKE) $(TARGET)
 	cd edgeview; $(MAKE) $(TARGET)
 	cd errorview; $(MAKE) $(TARGET)
+	cd featureview; $(MAKE) $(TARGET)
+	cd nodeview; $(MAKE) $(TARGET)
 	cd overlay; $(MAKE) $(TARGET)
 	cd segmentlists; $(MAKE) $(TARGET)
 	cd skeletonbenchmark; $(MAKE) $(TARGET)
