@@ -77,11 +77,13 @@ static long maximum_segmentation = -1;
 
 // display variables
 
+static const int ncolor_opts = 6;
 static int show_bbox = 1;
 static int segmentation_index = 1;
 static int show_slice = 0;
 static int selected_slice_index = 0;
 static RNScalar downsample_rate = 2.0;
+static int color_cycle = 0;
 
 
 
@@ -142,6 +144,9 @@ static long IndicesToIndex(long ix, long iy, long iz)
 
 static RNRgb Color(unsigned long value)
 {
+    // allow alternating colors
+    value += color_cycle;
+
     RNScalar red = (RNScalar) (((107 * value) % 700) % 255) / 255.0;
     RNScalar green = (RNScalar) (((509 * value) % 900) % 255) / 255.0;
     RNScalar blue = (RNScalar) (((200 * value) % 777) % 255) / 255.0;
@@ -466,6 +471,12 @@ void GLUTKeyboard(unsigned char key, int x, int y)
             break;
         }
 
+        case 'C':
+        case 'c': {
+            color_cycle = (color_cycle + 1) % ncolor_opts;
+            break;
+        }
+
         case 'W':
         case 'w': {
             show_slice = 1 - show_slice;
@@ -614,6 +625,9 @@ static int ParseArgs(int argc, char** argv)
                 argv++; argc--; resolution[RN_X] = atof(*argv); 
                 argv++; argc--; resolution[RN_Y] = atof(*argv);
                 argv++; argc--; resolution[RN_Z] = atof(*argv);
+            }
+            else if (!strcmp(*argv, "-start_index")) {
+                argv++; argc--; segmentation_index = atoi(*argv);
             }
             else { fprintf(stderr, "Invalid program argument: %s\n", *argv); return 0; }
         } else {
