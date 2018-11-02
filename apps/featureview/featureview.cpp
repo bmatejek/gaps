@@ -203,7 +203,6 @@ static int ReadData(void)
 
         for (long ie = 0; ie < nexamples; ++ie) {
             if (ie % 10) { delete grids[ie]; continue; }
-            printf("Here\n");
             positive_examples.push_back(grids[ie]);
         }
 
@@ -236,7 +235,6 @@ static int ReadData(void)
 
         for (long ie = 0; ie < nexamples; ++ie) {
             if (ie % 10) { delete grids[ie]; continue; }
-            printf("Here\n");
             negative_examples.push_back(grids[ie]);
         }
 
