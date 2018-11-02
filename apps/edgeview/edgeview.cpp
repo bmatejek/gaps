@@ -733,10 +733,7 @@ static void DrawSkeleton(int segment_index)
             // draw the vector if it exists
             glLineWidth(line_size);
             if (endpoint_vectors) {
-                R3Vector scaled_vector = endpoint_vectors[segment_index][iv];
-                
-                // scale vector to these coordinates
-                R3Vector vector = R3Vector(scaled_vector.X() * resolution[IB_X], scaled_vector.Y() * resolution[IB_Y], scaled_vector.Z() * resolution[IB_Z]);
+                R3Vector vector = endpoint_vectors[segment_index][iv];
                 vector.Normalize();
                 
                 // draw line

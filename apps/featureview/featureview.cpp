@@ -48,6 +48,9 @@ static R3Box world_box = R3null_box;
 
 // voxel grids
 
+static std::vector<R3Grid *> positive_examples = std::vector<R3Grid *>();
+static std::vector<R3Grid *> negative_examples = std::vector<R3Grid *>();
+static std::vector<R3Grid *> unknown_examples = std::vector<R3Grid *>();
 static R3Grid *grid = NULL;
 
 
@@ -127,6 +130,8 @@ static void ProcessFeature(void)
     RNTime start_time;
     start_time.Read();
 
+    if (segmentations) delete[] segmentations;
+
     // get the maximum values for each grid
     maximum_segmentation = (long) (grid->Maximum() + 0.5) + 1;
 
@@ -167,27 +172,90 @@ static void ProcessFeature(void)
 
 static int ReadData(void)
 {
-    if (grid) delete grid;
-
     // start statistics
     RNTime start_time;
     start_time.Read();
 
-    std::string filename;
-    if (show_positives) filename = positive_filenames[positive_index];
-    if (show_negatives) filename = negative_filenames[negative_index];
-    if (show_unknowns) filename = unknown_filenames[unknown_index];
+    long ngrids = 0;
 
-    R3Grid **grids = RNReadH5File(filename.c_str(), "main");
-    grid = grids[0];
-    delete[] grids;
+    // read all of the filenames
+    for (unsigned long is = 0; is < positive_filenames.size(); ++is) {
+        std::string filename = positive_filenames[is];
 
+        // read the example to see how many there are 
+        FILE *fp = fopen(filename.c_str(), "rb");
+        if (!fp) return 0;
+        long nexamples;
+        if (fread(&nexamples, sizeof(long), 1, fp) != 1) return 0;
+        ngrids += nexamples;
+        fclose(fp);
+
+        // get the h5 filename
+        char tmp_filename[4096];
+        sprintf(tmp_filename, "%s", filename.c_str());
+        char *extp = strrchr(tmp_filename, '.');
+        *extp = '\0';
+        char example_filename[4096];
+        sprintf(example_filename, "%s-examples.h5", tmp_filename); 
+
+        // read all of the grids
+        R3Grid **grids = RNReadH5File(example_filename, "main");
+
+        for (long ie = 0; ie < nexamples; ++ie) {
+            if (ie % 10) { delete grids[ie]; continue; }
+            positive_examples.push_back(grids[ie]);
+        }
+
+        // delete wrapper array
+        delete[] grids;
+    }
+
+    // read all of the filenames
+    for (unsigned long is = 0; is < negative_filenames.size(); ++is) {
+        std::string filename = negative_filenames[is];
+
+        // read the example to see how many there are 
+        FILE *fp = fopen(filename.c_str(), "rb");
+        if (!fp) return 0;
+        long nexamples;
+        if (fread(&nexamples, sizeof(long), 1, fp) != 1) return 0;
+        ngrids += nexamples;
+        fclose(fp);
+
+        // get the h5 filename
+        char tmp_filename[4096];
+        sprintf(tmp_filename, "%s", filename.c_str());
+        char *extp = strrchr(tmp_filename, '.');
+        *extp = '\0';
+        char example_filename[4096];
+        sprintf(example_filename, "%s-examples.h5", tmp_filename); 
+
+        // read all of the grids
+        R3Grid **grids = RNReadH5File(example_filename, "main");
+
+        for (long ie = 0; ie < nexamples; ++ie) {
+            if (ie % 10) { delete grids[ie]; continue; }
+            negative_examples.push_back(grids[ie]);
+        }
+
+        // delete wrapper array
+        delete[] grids;
+    }
+
+    if (print_verbose) {
+        printf("Read %ld grids in %0.2f seconds\n", ngrids, start_time.Elapsed());
+    }
+
+    // set the grid
+    grid = positive_examples[positive_index];
+    
     grid_size[RN_X] = grid->XResolution();
     grid_size[RN_Y] = grid->YResolution();
     grid_size[RN_Z] = grid->ZResolution();
 
-    if (segmentations) delete[] segmentations;
     ProcessFeature();
+
+
 
     // return success
     return 1;
@@ -229,8 +297,13 @@ static void DrawPointClouds(void)
     if (show_negatives) RNLoadRgb(RNred_rgb);
     if (show_unknowns) RNLoadRgb(RNblue_rgb);
 
-    // there is only one channel
     DrawSegment(1);
+
+    if (show_positives) RNLoadRgb(RNblue_rgb);
+    if (show_negatives) RNLoadRgb(RNyellow_rgb);
+    if (show_unknowns) RNLoadRgb(RNyellow_rgb);
+
+    DrawSegment(2);
 
     // pop the transformation
     transformation.Pop();
@@ -403,19 +476,22 @@ void GLUTSpecial(int key, int x, int y)
                 --positive_index;
                 if (positive_index < 0) 
                     positive_index = 0;
+                grid = positive_examples[positive_index];
             }
             if (show_negatives) {
                 --negative_index;
                 if (negative_index < 0)
                     negative_index = 0;
+                grid = negative_examples[negative_index];
             }
             if (show_unknowns) {
                 --unknown_index;
                 if (unknown_index < 0)
                     unknown_index = 0;
+                grid = unknown_examples[unknown_index];
             }
 
-            ReadData();
+            ProcessFeature();
 
             break;
         }
@@ -423,21 +499,24 @@ void GLUTSpecial(int key, int x, int y)
         case GLUT_KEY_RIGHT: {
             if (show_positives) {
                 ++positive_index;
-                if (positive_index > (long)(positive_filenames.size() - 1))
-                    positive_index = positive_filenames.size() - 1;
+                if (positive_index > (long)(positive_examples.size() - 1))
+                    positive_index = positive_examples.size() - 1;
+                grid = positive_examples[positive_index];
             }
             if (show_negatives) {
                 ++negative_index;
-                if (negative_index > (long)(negative_filenames.size() - 1))
-                    negative_index = negative_filenames.size() - 1;
+                if (negative_index > (long)(negative_examples.size() - 1))
+                    negative_index = negative_examples.size() - 1;
+                grid = negative_examples[negative_index];
             }
             if (show_unknowns) {
                 ++unknown_index;
-                if (unknown_index > (long)(unknown_filenames.size() - 1))
-                    unknown_index = unknown_filenames.size() - 1;
+                if (unknown_index > (long)(unknown_examples.size() - 1))
+                    unknown_index = unknown_examples.size() - 1;
+                grid = unknown_examples[unknown_index];
             }
 
-            ReadData();
+            ProcessFeature();
 
             break;
         }
@@ -476,7 +555,9 @@ void GLUTKeyboard(unsigned char key, int x, int y)
             show_positives = 0;
             show_unknowns = 0;
 
-            ReadData();
+            grid = negative_examples[negative_index];
+
+            ProcessFeature();
 
             break;
         }
@@ -487,7 +568,9 @@ void GLUTKeyboard(unsigned char key, int x, int y)
             show_positives = 1;
             show_unknowns = 0;
 
-            ReadData();
+            grid = positive_examples[positive_index];
+            
+            ProcessFeature();
 
             break;
         }
@@ -497,8 +580,10 @@ void GLUTKeyboard(unsigned char key, int x, int y)
             show_negatives = 0;
             show_positives = 0;
             show_unknowns = 1;
+                
+            grid = unknown_examples[unknown_index];
 
-            ReadData();
+            ProcessFeature();
 
             break;
         }
@@ -662,9 +747,9 @@ int main(int argc, char** argv)
     char positive_directory[4096];
     sprintf(positive_directory, "features/biological/%s/%s/positives", feature_set, dataset);
     char negative_directory[4096];
-    sprintf(negative_directory, "features/biological/%s/%s/positives", feature_set, dataset);
+    sprintf(negative_directory, "features/biological/%s/%s/negatives", feature_set, dataset);
     char unknown_directory[4096];
-    sprintf(unknown_directory, "features/biological/%s/%s/positives", feature_set, dataset);
+    sprintf(unknown_directory, "features/biological/%s/%s/unknowns", feature_set, dataset);
 
     // create empty vectors
     positive_filenames = std::vector<std::string>();
@@ -677,30 +762,60 @@ int main(int argc, char** argv)
     if ((dir = opendir(positive_directory)) != NULL) {
         while ((ent = readdir(dir)) != NULL) {
             if (ent->d_type != DT_REG) continue;
+            // read the filename
             char filename[4096];
             sprintf(filename, "%s/%s", positive_directory, ent->d_name);
-            positive_filenames.push_back(std::string(filename));
+            
+            // make sure that it is not h5
+            std::string example_filename = std::string(filename);
+            if (not (example_filename.substr(example_filename.find_last_of(".") + 1) == "examples")) continue;
+
+            // add to the vector of files to read
+            positive_filenames.push_back(example_filename);
         }
         closedir(dir);
     }
     if ((dir = opendir(negative_directory)) != NULL) {
         while ((ent = readdir(dir)) != NULL) {
             if (ent->d_type != DT_REG) continue;
+            // read the filename
             char filename[4096];
             sprintf(filename, "%s/%s", negative_directory, ent->d_name);
-            negative_filenames.push_back(std::string(filename));
+            
+            // make sure that it is not h5
+            std::string example_filename = std::string(filename);
+            if (not (example_filename.substr(example_filename.find_last_of(".") + 1) == "examples")) continue;
+
+            // add to the vector of files to read
+            negative_filenames.push_back(example_filename);
         }
         closedir(dir);
     }
     if ((dir = opendir(unknown_directory)) != NULL) {
         while ((ent = readdir(dir)) != NULL) {
             if (ent->d_type != DT_REG) continue;
+            // read the filename
             char filename[4096];
             sprintf(filename, "%s/%s", unknown_directory, ent->d_name);
-            unknown_filenames.push_back(std::string(filename));
+            
+            // make sure that it is not h5
+            std::string example_filename = std::string(filename);
+            if (not (example_filename.substr(example_filename.find_last_of(".") + 1) == "examples")) continue;
+
+            // add to the vector of files to read
+            unknown_filenames.push_back(example_filename);
         }
         closedir(dir);
     }
+
+    if (not positive_filenames.size() or not negative_filenames.size()) {
+        printf("No featuers found...\n");
+        exit(-1);
+    }
+    if (not unknown_filenames.size()) {
+        printf("No unknowns. Continuing...\n");
+    }
+
 
     ////////////////////////////////
     //// Read in the voxel files ////
@@ -717,6 +832,9 @@ int main(int argc, char** argv)
     // create viewer
     viewer = CreateViewer();
     if (!viewer) exit(-1);
+
+    printf("Feature sizes: \n");
+    printf("  %d %d %d\n", grid->XResolution(), grid->YResolution(), grid->ZResolution());
 
     // initialize GLUT
     GLUTInit(&argc, argv);

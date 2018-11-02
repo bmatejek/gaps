@@ -626,9 +626,7 @@ static int ParseArgs(int argc, char** argv)
                 argv++; argc--; resolution[RN_Y] = atof(*argv);
                 argv++; argc--; resolution[RN_Z] = atof(*argv);
             }
-            else if (!strcmp(*argv, "-start_index")) {
-                argv++; argc--; segmentation_index = atoi(*argv);
-            }
+            else if (!strcmp(*argv, "-start_index")) { argv++; argc--; segmentation_index = atoi(*argv); }
             else { fprintf(stderr, "Invalid program argument: %s\n", *argv); return 0; }
         } else {
             if (!filename) filename = *argv;

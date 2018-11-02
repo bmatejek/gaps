@@ -546,7 +546,7 @@ static void Preprocessing(void)
 static void DrawSegment(int segment_index)
 {
     transformation.Push();
-
+    glPointSize(1.0);
     glBegin(GL_POINTS);
     for (unsigned int iv = 0; iv < segmentations[segment_index].size(); ++iv) {
         // faster rendering with downsampling
@@ -578,7 +578,7 @@ static void DrawSkeleton(int segment_index)
     else if (skeleton_type == 1) endpoint_vectors = medial_endpoint_vectors;
 
     // sizes for skeleton joints
-    const double joint_size = 3;
+    const double joint_size = 4;
     const double endpoint_size = 60;
     const double line_size = 2;
     const double line_length = 250;
@@ -597,6 +597,7 @@ static void DrawSkeleton(int segment_index)
         glVertex3f(ix, iy, iz);
     }
     glEnd();
+    glPointSize(1.0);
 
     transformation.Pop();
 
@@ -620,12 +621,8 @@ static void DrawSkeleton(int segment_index)
             // draw the vector if it exists
             glLineWidth(line_size);
             if (endpoint_vectors) {
-                R3Vector scaled_vector = endpoint_vectors[segment_index][iv];
-                
-                // scale vector to these coordinates
-                R3Vector vector = R3Vector(scaled_vector.X() * resolution[IB_X], scaled_vector.Y() * resolution[IB_Y], scaled_vector.Z() * resolution[IB_Z]);
-                vector.Normalize();
-                
+                R3Vector vector = endpoint_vectors[segment_index][iv];
+
                 // draw line
                 glBegin(GL_LINES);
                 glVertex3f(ix, iy, iz);

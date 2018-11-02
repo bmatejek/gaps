@@ -549,7 +549,7 @@ static void DrawSkeleton(int segment_index)
     if (!skeletons) return;
 
     // sizes for skeleton joints
-    const double joint_size = 3;
+    const double joint_size = 4;
     const double endpoint_size = 60;
     const double line_size = 2;
     const double line_length = 250;
@@ -568,7 +568,7 @@ static void DrawSkeleton(int segment_index)
         glVertex3f(ix, iy, iz);
     }
     glEnd();
-
+    glPointSize(1.0);
     transformation.Pop();
 
     for (unsigned long is = 0; is < skeletons[segment_index].size(); ++is) {
@@ -591,18 +591,14 @@ static void DrawSkeleton(int segment_index)
             // draw the vector if it exists
             glLineWidth(line_size);
             if (endpoint_vectors) {
-                R3Vector scaled_vector = endpoint_vectors[segment_index][iv];
-                
-                // scale vector to these coordinates
-                R3Vector vector = R3Vector(scaled_vector.X() * resolution[IB_X], scaled_vector.Y() * resolution[IB_Y], scaled_vector.Z() * resolution[IB_Z]);
+                R3Vector vector = endpoint_vectors[segment_index][iv];
                 vector.Normalize();
-                
+                                
                 // draw line
                 glBegin(GL_LINES);
                 glVertex3f(ix, iy, iz);
                 glVertex3f(ix + line_length * vector.X(), iy + line_length * vector.Y(), iz + line_length * vector.Z());
                 glEnd();
-
                 R3Sphere(R3Point(ix, iy, iz) + line_length * vector, endpoint_size / 2.0).Draw();
             }
             glLineWidth(1.0);
@@ -790,6 +786,12 @@ void GLUTSpecial(int key, int x, int y)
             else {
                 --split_index;
                 if (split_index < 0) split_index = 0;
+
+                printf("Split Error: %d\n  Labels: ", split_index);
+                for (unsigned long is = 0; is < split_errors[split_index].size(); ++is) {
+                    printf("%ld ", split_errors[split_index][is]);
+                }
+                printf("\n");
             }
 
             break;
@@ -804,6 +806,12 @@ void GLUTSpecial(int key, int x, int y)
             else {
                 ++split_index;
                 if ((unsigned long)split_index > split_errors.size() - 1) split_index = split_errors.size() - 1;
+
+                printf("Split Error: %d\n  Labels: ", split_index);
+                for (unsigned long is = 0; is < split_errors[split_index].size(); ++is) {
+                    printf("%ld ", split_errors[split_index][is]);
+                }
+                printf("\n");
             }
 
             break;    

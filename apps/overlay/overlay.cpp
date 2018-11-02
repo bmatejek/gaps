@@ -13,7 +13,7 @@ static char *segment_dataset = NULL;
 static int print_verbose = 0;
 static int print_debug = 0;
 static int projection_dim = RN_Z;
-
+static bool affinity = false;
 
 
 // GLUT variables
@@ -61,9 +61,47 @@ Color(RNScalar value, bool image_type)
     else {
         unsigned long integral_value = (unsigned long) (value + 0.5);
 
+        // node generation
+        if (integral_value == 1219) {
+            c[0] = 0.153;
+            c[1] = 0.800;
+            c[2] = 0.117;
+        }
+        else if (integral_value == 1229) {
+            c[0] = 0.052;
+            c[1] = 0.440;
+            c[2] = 0.800;
+        }
+        else if (integral_value == 1248) {
+            c[0] = 0.800;
+            c[1] = 0.069;
+            c[2] = 0.526;
+        }
+        else if (integral_value == 1281) {
+            c[0] = 0.800;
+            c[1] = 0.198;
+            c[2] = 0.071;
+        }
+        else if (integral_value == 1283) {
+            c[0] = 1.000;
+            c[1] = 0.886;
+            c[2] = 0.037;
+        }
+        else if (integral_value == 1335) {
+            c[0] = 0.012;
+            c[1] = 0.003;
+            c[2] = 0.233;
+        }
+        else {
+            c[0] = 0.000;
+            c[1] = 0.000;
+            c[2] = 0.000;
+        }
+
+        /*
         c[0] = (((107 * integral_value) % 700) % 255) / 255.0;
         c[1] = (((509 * integral_value) % 900) % 255) / 255.0;
-        c[2] = (((200 * integral_value) % 777) % 255) / 255.0;
+        c[2] = (((200 * integral_value) % 777) % 255) / 255.0;*/
     }
 
     // return color
@@ -179,7 +217,15 @@ void GLUTRedraw(void)
                 image_color = Color(selected_image_slice->GridValue(i, j + k), true);
                 seg_color = Color(selected_segment_slice->GridValue(i, j + k), false);
 
-                RNRgb color = alpha * image_color + (1.0 - alpha) * seg_color;
+                RNRgb color;
+                double epsilon = 1e-2;
+                if (seg_color[0] < epsilon and seg_color[1] < epsilon and seg_color[2] < epsilon) {
+                    color = image_color;
+                }
+                else {
+                    color = alpha * image_color + (1.0 - alpha) * seg_color;
+                }
+                
 
                 RNLoadRgb(color);
                 // this transforms the coordinate system to top
@@ -500,14 +546,15 @@ ParseArgs(int argc, char **argv)
         if ((*argv)[0] == '-') {
             if (!strcmp(*argv, "-v")) print_verbose = 1;
             else if (!strcmp(*argv, "-debug")) print_debug = 1;
-            else { fprintf(stderr, "Invalid program argument: %s", *argv); return 0; }
+            else if (!strcmp(*argv, "-affinities")) affinity = true;
+            else { fprintf(stderr, "Invalid program argument: %s\n", *argv); return 0; }
         }
         else {
             if (!image_filename) { image_filename = *argv; }
             else if (!image_dataset) { image_dataset = *argv; }
             else if (!segment_filename) { segment_filename = *argv; }
             else if (!segment_dataset) { segment_dataset = *argv; }
-            else { fprintf(stderr, "Invalid program argument: %s", *argv); return 0; }
+            else { fprintf(stderr, "Invalid program argument: %s\n", *argv); return 0; }
         } 
         argv++; argc--;
     }
@@ -539,9 +586,20 @@ int main(int argc, char **argv)
     image_grid = image_grids[0];
     segment_grid = segment_grids[0];
 
+
     if ((image_grid->XResolution() != segment_grid->XResolution()) || (image_grid->YResolution() != segment_grid->YResolution()) || (image_grid->ZResolution() != segment_grid->ZResolution())) {
         fprintf(stderr, "Image and segmentation are variable sizes...\n");
         return -1;
+    }
+
+    if (affinity) {
+        for (int iz = 0; iz < image_grid->ZResolution(); ++iz) {
+            for (int iy = 0; iy < image_grid->YResolution(); ++iy) {
+                for (int ix = 0; ix < image_grid->XResolution(); ++ix) {
+                    image_grid->SetGridValue(ix, iy, iz, 255 * image_grid->GridValue(ix, iy, iz));
+                }
+            }
+        }
     }
 
     // free memory
