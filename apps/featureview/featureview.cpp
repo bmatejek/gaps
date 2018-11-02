@@ -203,6 +203,7 @@ static int ReadData(void)
 
         for (long ie = 0; ie < nexamples; ++ie) {
             if (ie % 10) { delete grids[ie]; continue; }
+            printf("Here\n");
             positive_examples.push_back(grids[ie]);
         }
 
@@ -235,6 +236,7 @@ static int ReadData(void)
 
         for (long ie = 0; ie < nexamples; ++ie) {
             if (ie % 10) { delete grids[ie]; continue; }
+            printf("Here\n");
             negative_examples.push_back(grids[ie]);
         }
 
@@ -369,16 +371,6 @@ void GLUTRedraw(void)
 
     // epilogue
     glEnable(GL_LIGHTING);
-
-    // write the title
-    std::string filename;
-    if (show_positives) filename = positive_filenames[positive_index];
-    if (show_negatives) filename = negative_filenames[negative_index];
-    if (show_unknowns) filename = unknown_filenames[unknown_index];
-    
-    char title[4096];
-    sprintf(title, "Feature %s\n", filename.c_str());
-    glutSetWindowTitle(title);
 
     // swap buffers
     glutSwapBuffers();
