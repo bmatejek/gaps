@@ -61,47 +61,9 @@ Color(RNScalar value, bool image_type)
     else {
         unsigned long integral_value = (unsigned long) (value + 0.5);
 
-        // node generation
-        if (integral_value == 1219) {
-            c[0] = 0.153;
-            c[1] = 0.800;
-            c[2] = 0.117;
-        }
-        else if (integral_value == 1229) {
-            c[0] = 0.052;
-            c[1] = 0.440;
-            c[2] = 0.800;
-        }
-        else if (integral_value == 1248) {
-            c[0] = 0.800;
-            c[1] = 0.069;
-            c[2] = 0.526;
-        }
-        else if (integral_value == 1281) {
-            c[0] = 0.800;
-            c[1] = 0.198;
-            c[2] = 0.071;
-        }
-        else if (integral_value == 1283) {
-            c[0] = 1.000;
-            c[1] = 0.886;
-            c[2] = 0.037;
-        }
-        else if (integral_value == 1335) {
-            c[0] = 0.012;
-            c[1] = 0.003;
-            c[2] = 0.233;
-        }
-        else {
-            c[0] = 0.000;
-            c[1] = 0.000;
-            c[2] = 0.000;
-        }
-
-        /*
         c[0] = (((107 * integral_value) % 700) % 255) / 255.0;
         c[1] = (((509 * integral_value) % 900) % 255) / 255.0;
-        c[2] = (((200 * integral_value) % 777) % 255) / 255.0;*/
+        c[2] = (((200 * integral_value) % 777) % 255) / 255.0;
     }
 
     // return color
@@ -585,7 +547,6 @@ int main(int argc, char **argv)
     R3Grid **segment_grids = RNReadH5File(segment_filename, segment_dataset);
     image_grid = image_grids[0];
     segment_grid = segment_grids[0];
-
 
     if ((image_grid->XResolution() != segment_grid->XResolution()) || (image_grid->YResolution() != segment_grid->YResolution()) || (image_grid->ZResolution() != segment_grid->ZResolution())) {
         fprintf(stderr, "Image and segmentation are variable sizes...\n");

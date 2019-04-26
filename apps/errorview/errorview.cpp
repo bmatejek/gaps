@@ -289,15 +289,11 @@ ReadSkeletonData(void)
 
 
 
-static int ReadData(void)
+static int ReadSegmentationData(void)
 {
     // start statistics
     RNTime start_time;
     start_time.Read();
-
-    R3Grid **gold_grids = RNReadH5File(meta_data.gold_filename, meta_data.gold_dataset);
-    gold_grid = gold_grids[0];
-    delete[] gold_grids;
 
     R3Grid **rhoana_grids = RNReadH5File(meta_data.rhoana_filename, meta_data.rhoana_dataset);
     rhoana_grid = rhoana_grids[0];
@@ -312,7 +308,31 @@ static int ReadData(void)
 
     // print statistics
     if(print_verbose) {
-        printf("Read voxel grids...\n");
+        printf("Read segmentation data...\n");
+        printf("  Time = %.2f seconds\n", start_time.Elapsed());
+        printf("  Grid Size = (%ld %ld %ld)\n", grid_size[IB_X], grid_size[IB_Y], grid_size[IB_Z]);
+        printf("  Resolution = (%0.2lf %0.2lf %0.2lf)\n", resolution[IB_X], resolution[IB_Y], resolution[IB_Z]);
+    }
+
+    // return success
+    return 1;
+}
+
+
+
+static int ReadGoldData(void)
+{
+    // start statistics
+    RNTime start_time;
+    start_time.Read();
+
+    R3Grid **gold_grids = RNReadH5File(meta_data.gold_filename, meta_data.gold_dataset);
+    gold_grid = gold_grids[0];
+    delete[] gold_grids;
+
+    // print statistics
+    if(print_verbose) {
+        printf("Read gold data...\n");
         printf("  Time = %.2f seconds\n", start_time.Elapsed());
         printf("  Grid Size = (%ld %ld %ld)\n", grid_size[IB_X], grid_size[IB_Y], grid_size[IB_Z]);
         printf("  Resolution = (%0.2lf %0.2lf %0.2lf)\n", resolution[IB_X], resolution[IB_Y], resolution[IB_Z]);
@@ -363,10 +383,10 @@ static RNRgb Color(unsigned long value)
 // Preprocessing functions
 ////////////////////////////////////////////////////////////////////////
 
-static long *Seg2GoldMapping(long *segmentation, long *gold, long nentries, double match_threshold=0.80, double nonzero_threshold=0.40)
+static int *Seg2GoldMapping(int *segmentation, int *gold, long nentries, double match_threshold=0.80, double nonzero_threshold=0.40)
 {
     // find the maximum segmentation value
-    long max_segmentation_value = 0;
+    int max_segmentation_value = 0;
     for (long iv = 0; iv < nentries; ++iv) {
         if (segmentation[iv] > max_segmentation_value)
             max_segmentation_value = segmentation[iv];
@@ -374,7 +394,7 @@ static long *Seg2GoldMapping(long *segmentation, long *gold, long nentries, doub
     max_segmentation_value++;
 
     // find the maximum gold value
-    long max_gold_value = 0;
+    int max_gold_value = 0;
     for (long iv = 0; iv < nentries; ++iv) {
         if (gold[iv] > max_gold_value) 
             max_gold_value = gold[iv];
@@ -383,14 +403,14 @@ static long *Seg2GoldMapping(long *segmentation, long *gold, long nentries, doub
 
     // find the number of voxels per segment
     nvoxels_per_segment = new long[max_segmentation_value];
-    for (long iv = 0; iv < max_segmentation_value; ++iv)
+    for (int iv = 0; iv < max_segmentation_value; ++iv)
         nvoxels_per_segment[iv] = 0;
     for (long iv = 0; iv < nentries; ++iv)
         nvoxels_per_segment[segmentation[iv]]++;
 
-    std::unordered_map<long, std::unordered_map<long, long> > seg2gold_overlap = std::unordered_map<long, std::unordered_map<long, long> >();   
-    for (long is = 0; is < max_segmentation_value; ++is) {
-        if (nvoxels_per_segment[is]) seg2gold_overlap.insert(std::pair<long, std::unordered_map<long, long> >(is, std::unordered_map<long, long>()));
+    std::unordered_map<int, std::unordered_map<int, int> > seg2gold_overlap = std::unordered_map<int, std::unordered_map<int, int> >();   
+    for (int is = 0; is < max_segmentation_value; ++is) {
+        if (nvoxels_per_segment[is]) seg2gold_overlap.insert(std::pair<int, std::unordered_map<int, int> >(is, std::unordered_map<int, int>()));
     }
     
     for (long iv = 0; iv < nentries; ++iv) {
@@ -398,14 +418,14 @@ static long *Seg2GoldMapping(long *segmentation, long *gold, long nentries, doub
     }
     
     // create the mapping
-    long *segmentation_to_gold = new long[max_segmentation_value];
-    for (long is = 0; is < max_segmentation_value; ++is) {
+    int *segmentation_to_gold = new int[max_segmentation_value];
+    for (int is = 0; is < max_segmentation_value; ++is) {
         if (!nvoxels_per_segment[is]) { segmentation_to_gold[is] = 0; continue; }
-        long gold_id = 0;
-        long gold_max_value = 0;
+        int gold_id = 0;
+        int gold_max_value = 0;
 
         // only gets label of 0 if the number of non zero voxels is below threshold
-        for (std::unordered_map<long, long>::iterator iter = seg2gold_overlap[is].begin(); iter != seg2gold_overlap[is].end(); ++iter) {
+        for (std::unordered_map<int, int>::iterator iter = seg2gold_overlap[is].begin(); iter != seg2gold_overlap[is].end(); ++iter) {
             if (not iter->first) continue;
             if (iter->second > gold_max_value) {
                 gold_max_value = iter->second;
@@ -430,60 +450,25 @@ static void Preprocessing(void)
     RNTime start_time;
     start_time.Read();
 
+    ReadSegmentationData();
+
     // create a vector for each valid ID
     segmentations = new std::vector<long>[maximum_segmentation];
     for (long iv = 0; iv < maximum_segmentation; ++iv)
         segmentations[iv] = std::vector<long>();
 
     long nentries = grid_size[IB_X] * grid_size[IB_Y] * grid_size[IB_Z];
-    long *gold = new long[nentries];
-    long *segmentation = new long[nentries];
-    long max_segmentation_value = 0;
-    long max_gold_value = 0;
+
+    int *segmentation = new int[nentries];
+    int max_segmentation_value = 0;
     for (long iv = 0; iv < nentries; ++iv) {
-        long gold_index = (long)(gold_grid->GridValue(iv) + 0.5);
         long segment_index = (long)(rhoana_grid->GridValue(iv) + 0.5);
 
-        gold[iv] = gold_index;
         segmentation[iv] = segment_index;
 
-        if (gold[iv] > max_gold_value) max_gold_value = gold[iv];
         if (segmentation[iv] > max_segmentation_value) max_segmentation_value = segmentation[iv];
     }
     max_segmentation_value++;
-    max_gold_value++;
-
-    long *seg2gold = Seg2GoldMapping(segmentation, gold, nentries);
-    for (long is = 0; is < max_segmentation_value; ++is) {
-        if (seg2gold[is] < 0 and nvoxels_per_segment[is] > merge_threshold) merge_errors.push_back(is);
-    }
-
-    std::vector<long> *seg_per_gold = new std::vector<long>[max_gold_value];
-    for (long ig = 0; ig < max_gold_value; ++ig) {
-        seg_per_gold[ig] = std::vector<long>();
-    }
-    for (long is = 0; is < max_segmentation_value; ++is) {
-        if (seg2gold[is] < 1) continue;
-
-        seg_per_gold[seg2gold[is]].push_back(is);
-    }
-    for (long ig = 0; ig < max_gold_value; ++ig) {
-        if (seg_per_gold[ig].size() < 2) continue;
-
-        std::vector<long> split_error = std::vector<long>();
-        for (unsigned long is = 0; is < seg_per_gold[ig].size(); ++is) {
-            split_error.push_back(seg_per_gold[ig][is]);
-        }
-
-        split_errors.push_back(split_error);
-    }
-
-
-    // free memory
-    delete[] gold;
-    delete[] segmentation;
-    delete[] seg2gold;
-    delete[] seg_per_gold;
 
     // go through all voxels to see if it belongs to the boundary
     for (int iz = 1; iz < grid_size[IB_Z] - 1; ++iz) {
@@ -506,6 +491,56 @@ static void Preprocessing(void)
             }
         }
     }
+
+    delete rhoana_grid;
+
+    ReadGoldData();
+
+    int *gold = new int[nentries];
+    int max_gold_value = 0;
+    for (long iv = 0; iv < nentries; ++iv) {
+        long gold_index = (long)(gold_grid->GridValue(iv) + 0.5);
+
+        gold[iv] = gold_index;
+
+        if (gold[iv] > max_gold_value) max_gold_value = gold[iv];
+    }
+    max_gold_value++;
+    
+    delete gold_grid;
+    printf("A\n");
+    int *seg2gold = Seg2GoldMapping(segmentation, gold, nentries);
+    for (long is = 0; is < max_segmentation_value; ++is) {
+        if (seg2gold[is] < 0 and nvoxels_per_segment[is] > merge_threshold) merge_errors.push_back(is);
+    }
+    printf("B\n");
+    std::vector<int> *seg_per_gold = new std::vector<int>[max_gold_value];
+    for (int ig = 0; ig < max_gold_value; ++ig) {
+        seg_per_gold[ig] = std::vector<int>();
+    }
+    printf("D\n");
+    for (int is = 0; is < max_segmentation_value; ++is) {
+        if (seg2gold[is] < 1) continue;
+
+        seg_per_gold[seg2gold[is]].push_back(is);
+    }
+    printf("E\n");
+    for (int ig = 0; ig < max_gold_value; ++ig) {
+        if (seg_per_gold[ig].size() < 2) continue;
+
+        std::vector<long> split_error = std::vector<long>();
+        for (unsigned long is = 0; is < seg_per_gold[ig].size(); ++is) {
+            split_error.push_back(seg_per_gold[ig][is]);
+        }
+
+        split_errors.push_back(split_error);
+    }
+    printf("C\n");
+    // free memory
+    delete[] gold;
+    delete[] segmentation;
+    delete[] seg2gold;
+    delete[] seg_per_gold;
 
     if (print_verbose) {
         printf("Preprocessing...\n");
@@ -620,9 +655,6 @@ void GLUTStop(void)
     // delete the neuron data
     RNTime start_time;
     start_time.Read();
-
-    if (gold_grid) delete gold_grid;
-    if (rhoana_grid) delete rhoana_grid;
 
     // print statistics
     if(print_verbose) {
@@ -1045,7 +1077,6 @@ int main(int argc, char** argv)
     /////////////////////////////////
 
     if (!ReadMetaData(prefix)) exit(-1);
-    if (!ReadData()) exit(-1);
     if (!ReadSkeletonData()) exit(-1);
 
     // get all of the preprocessing time
