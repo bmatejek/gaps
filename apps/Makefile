@@ -25,6 +25,7 @@ target:
 	cd edgeview; $(MAKE) $(TARGET)
 	cd errorview; $(MAKE) $(TARGET)
 	cd featureview; $(MAKE) $(TARGET)
+	cd JWRview; $(MAKE) $(TARGET)
 	cd nodeview; $(MAKE) $(TARGET)
 	cd oryxmovie; $(MAKE) $(TARGET)
 	cd overlay; $(MAKE) $(TARGET)
