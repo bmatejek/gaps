@@ -151,7 +151,7 @@ static int ReadConnectomeData(void)
     char connectome_filename[4096];
     if (skeleton_method == 0) sprintf(connectome_filename, "connectomes/%s/%06d.pts", prefix, segmentation_index);
     else if (skeleton_method == 1) sprintf(connectome_filename, "skeletons/%s/%06d.pts", prefix, segmentation_index);
-    else if (skeleton_method == 2) sprintf(connectome_filename, "baselines/topological-thinnings-downsampled/%s/%06d.pts", prefix, segmentation_index);
+    else if (skeleton_method == 2) sprintf(connectome_filename, "baselines/topological-thinnings/%s/%06d.pts", prefix, segmentation_index);
     else if (skeleton_method == 3) sprintf(connectome_filename, "baselines/teasers/%s/%06d.pts", prefix, segmentation_index);
     else return 0;
 
