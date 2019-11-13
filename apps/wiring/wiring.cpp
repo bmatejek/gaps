@@ -163,7 +163,7 @@ static int ReadConnectomeData(void)
     if (fread(&(grid_size[OR_Y]), sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", connectome_filename); return 0; }
     if (fread(&(grid_size[OR_X]), sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", connectome_filename); return 0; }
     if (fread(&nconnectome_points, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", connectome_filename); return 0; }
-    printf("%ld\n", nconnectome_points);
+
     for (long iv = 0; iv < nconnectome_points; ++iv) {
         long voxel_index;
         if (fread(&voxel_index, sizeof(long), 1, fp) != 1)  { fprintf(stderr, "Failed to read %s.\n", connectome_filename); return 0; }
@@ -357,6 +357,19 @@ void GLUTRedraw(void)
     if(show_bbox) {
         RNLoadRgb(RNRgb(not background_color[0], not background_color[1], not background_color[2]));
         world_box.Outline();
+
+        // double zwidth = world_box.ZMax() / 4;
+        // double ywidth = world_box.YMax() / 4;
+        // double xwidth = world_box.XMax() / 4;
+
+        // for (int iz = 0; iz < 4; ++iz) {
+        //     for (int iy = 0; iy < 4; ++iy) {
+        //         for (int ix = 0; ix < 4; ++ix) {
+        //             R3Box box = R3Box(ix * xwidth, iy * ywidth, iz * zwidth, (ix + 1) * xwidth, (iy + 1) * ywidth, (iz + 1) * zwidth);
+        //             box.Outline();
+        //         }
+        //     }
+        // }
     }
 
     // draw segmentation
