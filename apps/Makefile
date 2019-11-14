@@ -19,6 +19,7 @@ release:
 target: 
 	cd 2dview; $(MAKE) $(TARGET)
 	cd 3dview; $(MAKE) $(TARGET)
+	cd blockview; $(MAKE) $(TARGET)
 	cd connectome; $(MAKE) $(TARGET)
 	cd findsomae; $(MAKE) $(TARGET)
 	cd downsampleview; $(MAKE) $(TARGET)	
