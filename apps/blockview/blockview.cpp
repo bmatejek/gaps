@@ -714,7 +714,7 @@ void GLUTKeyboard(unsigned char key, int x, int y)
             break;
         }
 
-        /*case 'E': 
+        case 'E': 
         case 'e': {
             synapse_point_size -= 5;
             break;
@@ -725,28 +725,6 @@ void GLUTKeyboard(unsigned char key, int x, int y)
             synapse_point_size += 5;
             break;
         }
-
-        case 'O':
-        case 'o': {
-            skeleton_method = 0;
-            ReadConnectomeData();
-            break;
-        }
-
-        case 'I':
-        case 'i': {
-            skeleton_method = 2;
-            ReadConnectomeData();
-            break;
-        }
-
-        case 'N':
-        case 'n': {
-            skeleton_method = 4;
-            ReadConnectomeData();
-            break;
-        }
-
 
         case 'P':
         case 'p': {
@@ -770,20 +748,6 @@ void GLUTKeyboard(unsigned char key, int x, int y)
             break;
         }
 
-        case 'R':
-        case 'r': {
-            skeleton_method = 1;
-            ReadConnectomeData();
-            break;
-        }
-
-        case 'T': 
-        case 't': {
-            skeleton_method = 3;
-            ReadConnectomeData();
-            break;
-        }
-
         case 'X':
         case 'x': {
             downsample_rate += 0.01;
@@ -796,7 +760,7 @@ void GLUTKeyboard(unsigned char key, int x, int y)
             downsample_rate -= 0.01;
             printf("Downsample Rate: %lf\n", downsample_rate);
             break;
-        }*/
+        }
 
         case ENTER: {
             background_color[0] = 1.0 - background_color[0];
