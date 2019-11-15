@@ -48,9 +48,9 @@ static char skeleton_directory[4096];
 
 // current block
 
-static int z_block_index = 10;
-static int y_block_index = 1;
-static int x_block_index = 1;
+static int z_block_index = 0;
+static int y_block_index = 0;
+static int x_block_index = 0;
 
 
 
@@ -918,6 +918,14 @@ static int ParseArgs(int argc, char** argv)
         if((*argv)[0] == '-') {
             if (!strcmp(*argv, "-v")) print_verbose = 1;
             else if (!strcmp(*argv, "-debug")) print_debug = 1;
+            else if (!strcmp(*argv, "-block")) {
+                argv++; argc--;
+                z_block_index = atoi(*argv);
+                argv++; argc--;
+                y_block_index = atoi(*argv);
+                argv++; argc--;
+                x_block_index = atoi(*argv);
+            }
             else { fprintf(stderr, "Invalid program argument: %s\n", *argv); return 0; }
         } else {
             if (!prefix) prefix = *argv;
