@@ -41,14 +41,16 @@ static long volume_size[3] = { -1, -1, -1 };
 static long block_size[3] = { -1, -1, -1 };
 static char blocks_directory[4096];
 static char synapses_directory[4096];
+static char somae_directory[4096];
+static char skeleton_directory[4096];
 
 
 
 // current block
 
-static int z_block_index = 0;
-static int y_block_index = 0;
-static int x_block_index = 0;
+static int z_block_index = 10;
+static int y_block_index = 1;
+static int x_block_index = 1;
 
 
 
@@ -68,6 +70,7 @@ static const int ncolor_opts = 24;
 static int color_cycle = 0;
 static RNScalar downsample_rate = 0.5;
 static double synapse_point_size = 100;
+static double skeleton_point_size = 3;
 
 
 
@@ -89,10 +92,10 @@ static long label_index = -1;
 static std::vector<long> labels;
 static std::unordered_map<long, std::vector<long> > surfaces;
 static std::unordered_map<long, std::vector<long> > synapses;
+static std::unordered_map<long, std::vector<long> > skeletons;
 
 
-/*static std::vector<long> synapses;
-static std::vector<long> connectome;
+/*static std::vector<long> connectome;
 static std::vector<long> somae;*/
 
 
@@ -100,7 +103,6 @@ static std::vector<long> somae;*/
 
 // static int segmentation_index = 1;
 // static int skeleton_method = 0;
-// static double skeleton_point_size = 3;
 
 
 
@@ -167,13 +169,21 @@ static int ReadMetaData(void)
     if (!fgets(comment, 4096, fp)) return 0;
     if (fscanf(fp, "%ldx%ldx%ld\n", &(block_size[OR_X]), &(block_size[OR_Y]), &(block_size[OR_Z])) != 3) return 0;
 
-    // read in the block size
+    // read in the blocks directory
     if (!fgets(comment, 4096, fp)) return 0;
     if (fscanf(fp, "%s\n", blocks_directory) != 1) return 0;
 
-    // read in the block size
+    // read in the synapses directory
     if (!fgets(comment, 4096, fp)) return 0;
     if (fscanf(fp, "%s\n", synapses_directory) != 1) return 0;
+
+    // read in the somae directory
+    if (!fgets(comment, 4096, fp)) return 0;
+    if (fscanf(fp, "%s\n", somae_directory) != 1) return 0;
+
+    // read in the skeleton directory
+    if (!fgets(comment, 4096, fp)) return 0;
+    if (fscanf(fp, "%s\n", skeleton_directory) != 1) return 0;
 
     // close the file
     fclose(fp);
@@ -194,10 +204,11 @@ static int ReadBlockData(void)
     labels = std::vector<long>();
     surfaces = std::unordered_map<long, std::vector<long> >();
     synapses = std::unordered_map<long, std::vector<long> >();
+    skeletons = std::unordered_map<long, std::vector<long> >();
 
     // get the segment file for this block
     char segment_filename[4096];
-    snprintf(segment_filename, 4096, "%s/%s-%04dz-%04dy-%04dx.h5", blocks_directory, prefix, z_block_index, y_block_index, x_block_index);
+    snprintf(segment_filename, 4096, "%s/%s-input_labels-%04dz-%04dy-%04dx.h5", blocks_directory, prefix, z_block_index, y_block_index, x_block_index);
 
     R3Grid **segmentations = RNReadH5File(segment_filename, "main");
     R3Grid *segmentation = segmentations[0];
@@ -252,7 +263,7 @@ static int ReadBlockData(void)
 
     // read the synapses
     char synapse_filename[4096];
-    snprintf(synapse_filename, 4096, "%s/%s-%04dz-%04dy-%04dx.pts", synapses_directory, prefix, z_block_index, y_block_index, x_block_index);
+    snprintf(synapse_filename, 4096, "%s/%s-synapses-%04dz-%04dy-%04dx.pts", synapses_directory, prefix, z_block_index, y_block_index, x_block_index);
 
     FILE *fp = fopen(synapse_filename, "rb");
     if (!fp) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
@@ -309,6 +320,66 @@ static int ReadBlockData(void)
 
     printf("Processed file %s in %0.2f seconds.\n", synapse_filename, start_time.Elapsed());
 
+    // start statistics
+    start_time.Read();
+
+    for (unsigned long iv = 0; iv < labels.size(); ++iv) {
+        long neuron_id = labels[iv];
+
+        // read the synapses
+        char skeleton_filename[4096];
+        snprintf(skeleton_filename, 4096, "%s/%s-skeleton-%04dz-%04dy-%04dx-ID-%012ld.pts", skeleton_directory, prefix, z_block_index, y_block_index, x_block_index, neuron_id);
+
+        FILE *fp = fopen(skeleton_filename, "rb");
+        if (!fp) { fprintf(stderr, "File not found %s.\n", skeleton_filename); continue; }
+
+        long z_input_volume_size, y_input_volume_size, x_input_volume_size;
+        long z_input_block_size, y_input_block_size, x_input_block_size;
+
+        if (fread(&z_input_volume_size, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", skeleton_filename); return 0; }
+        if (fread(&y_input_volume_size, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", skeleton_filename); return 0; }
+        if (fread(&x_input_volume_size, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", skeleton_filename); return 0; }
+        
+        if (z_input_volume_size != volume_size[OR_Z]) { fprintf(stderr, "Failed to read %s.\n", skeleton_filename); return 0; }
+        if (y_input_volume_size != volume_size[OR_Y]) { fprintf(stderr, "Failed to read %s.\n", skeleton_filename); return 0; }
+        if (x_input_volume_size != volume_size[OR_X]) { fprintf(stderr, "Failed to read %s.\n", skeleton_filename); return 0; }
+
+        if (fread(&z_input_block_size, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", skeleton_filename); return 0; }
+        if (fread(&y_input_block_size, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", skeleton_filename); return 0; }
+        if (fread(&x_input_block_size, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", skeleton_filename); return 0; }
+
+        if (z_input_block_size != block_size[OR_Z]) { fprintf(stderr, "Failed to read %s.\n", skeleton_filename); return 0; }
+        if (y_input_block_size != block_size[OR_Y]) { fprintf(stderr, "Failed to read %s.\n", skeleton_filename); return 0; }
+        if (x_input_block_size != block_size[OR_X]) { fprintf(stderr, "Failed to read %s.\n", skeleton_filename); return 0; }
+
+        // get the label and number of synapses
+        long input_neuron_id;
+        long nskeleton_points;
+        
+        if (fread(&input_neuron_id, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", skeleton_filename); return 0; }
+        if (fread(&nskeleton_points, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", skeleton_filename); return 0; }
+        if (input_neuron_id != neuron_id) { fprintf(stderr, "Failed to read %s.\n", skeleton_filename); return 0; }
+
+        skeletons[neuron_id] = std::vector<long>();
+        // ignore the global coordinates
+        for (long is = 0; is < nskeleton_points; ++is) {
+            long dummy_index;
+            if (fread(&dummy_index, sizeof(long), 1, fp) != 1)  { fprintf(stderr, "Failed to read %s.\n", skeleton_filename); return 0; }
+        }
+
+        // add the local coordinates
+        for (long is = 0; is < nskeleton_points; ++is) {
+            long linear_index;
+            if (fread(&linear_index, sizeof(long), 1, fp) != 1)  { fprintf(stderr, "Failed to read %s.\n", skeleton_filename); return 0; }
+            skeletons[neuron_id].push_back(linear_index);
+        }
+
+        // close file
+        fclose(fp);
+    }
+
+    printf("Processed skeleton files in %0.2f seconds.\n", start_time.Elapsed());
+
     /* TODO would like to keep this when switching blocks */
     label_index = 0;
     label = labels[label_index];
@@ -321,70 +392,6 @@ static int ReadBlockData(void)
 
 
 /*
-
-
-
-static int ReadSynapseData(void)
-{
-    synapses = std::vector<long>();
-
-    char synapse_filename[4096];
-    sprintf(synapse_filename, "synapses/%s/%06d.pts", prefix, segmentation_index);
-
-    FILE *fp = fopen(synapse_filename, "rb");
-    if (!fp) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
-
-    long nsynapse_points;
-    if (fread(&(grid_size[OR_Z]), sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
-    if (fread(&(grid_size[OR_Y]), sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
-    if (fread(&(grid_size[OR_X]), sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
-    if (fread(&nsynapse_points, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
-
-    for (long iv = 0; iv < nsynapse_points; ++iv) {
-        long voxel_index;
-        if (voxel_index < 0) {
-            voxel_index = -1 * voxel_index;
-        }
-        if (fread(&voxel_index, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
-        synapses.push_back(voxel_index);
-    }
-
-    // return success 
-    return 1;
-}
-
-
-
-static int ReadConnectomeData(void)
-{
-    connectome = std::vector<long>();
-
-    char connectome_filename[4096];
-    if (skeleton_method == 0) sprintf(connectome_filename, "connectomes/%s/%06d.pts", prefix, segmentation_index);
-    else if (skeleton_method == 1) sprintf(connectome_filename, "skeletons/%s/%06d.pts", prefix, segmentation_index);
-    else if (skeleton_method == 2) sprintf(connectome_filename, "baselines/topological-thinnings/%s/%06d.pts", prefix, segmentation_index);
-    else if (skeleton_method == 3) sprintf(connectome_filename, "baselines/teasers/%s/%06d.pts", prefix, segmentation_index);
-    else return 0;
-
-    FILE *fp = fopen(connectome_filename, "rb"); 
-    if (!fp) { fprintf(stderr, "Failed to read %s.\n", connectome_filename); return 0; }
-
-    long nconnectome_points;
-    if (fread(&(grid_size[OR_Z]), sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", connectome_filename); return 0; }
-    if (fread(&(grid_size[OR_Y]), sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", connectome_filename); return 0; }
-    if (fread(&(grid_size[OR_X]), sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", connectome_filename); return 0; }
-    if (fread(&nconnectome_points, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", connectome_filename); return 0; }
-    printf("%ld\n", nconnectome_points);
-    for (long iv = 0; iv < nconnectome_points; ++iv) {
-        long voxel_index;
-        if (fread(&voxel_index, sizeof(long), 1, fp) != 1)  { fprintf(stderr, "Failed to read %s.\n", connectome_filename); return 0; }
-        if (voxel_index < 0) voxel_index = -1 * voxel_index;
-        connectome.push_back(voxel_index);
-    }
-
-    // return success
-    return 1;
-}
 
 
 static int ReadSomaeData(void)
@@ -459,15 +466,15 @@ static void DrawSynapse(void)
 
 
 
-/*static void DrawConnectome(void)
+static void DrawSkeleton(void)
 {
     transformation.Push();
     glPointSize(skeleton_point_size);
     glBegin(GL_POINTS);
-    for (unsigned int iv = 0; iv < connectome.size(); ++iv) {
+    for (unsigned int iv = 0; iv < skeletons[label].size(); ++iv) {
         // get the coordinates from the linear index
         long ix, iy, iz;
-        IndexToIndices(connectome[iv], ix, iy, iz);
+        IndexToIndices(skeletons[label][iv], ix, iy, iz);
         glVertex3f(ix, iy, iz);
     }
     glEnd();
@@ -476,7 +483,7 @@ static void DrawSynapse(void)
 }
 
 
-static void DrawSomae(void)
+/*static void DrawSomae(void)
 {
     transformation.Push();
     glPointSize(1.0);
@@ -550,7 +557,7 @@ void GLUTRedraw(void)
     DrawSurface();
     RNLoadRgb(RNRgb(not background_color[0], not background_color[1], not background_color[2]));
     DrawSynapse();
-    //DrawConnectome();
+    DrawSkeleton();
     //DrawSomae();
 
     // epilogue
