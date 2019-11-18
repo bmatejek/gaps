@@ -6,6 +6,7 @@
 
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <algorithm>
 #include "R3Graphics/R3Graphics.h"
 #include "RNDataStructures/RNDataStructures.h"
@@ -48,9 +49,9 @@ static char skeleton_directory[4096];
 
 // current block
 
-static int z_block_index = 0;
-static int y_block_index = 0;
-static int x_block_index = 0;
+static int center_block_z_index = 0;
+static int center_block_y_index = 0;
+static int center_block_x_index = 0;
 
 
 
@@ -85,24 +86,31 @@ static int GLUTmodifiers = 0;
 
 
 
+// variables for the neighboring cubes
+
+static const short ncubes = 8;
+static long offsets[ncubes][3] = {
+    { 0, 0, 0 },
+    { 0, 0, 1 },
+    { 0, 1, 0 },
+    { 0, 1, 1 },
+    { 1, 0, 0 },
+    { 1, 0, 1 },
+    { 1, 1, 0 },
+    { 1, 1, 1 }
+};
+static R3Box block_boxes[ncubes];
+
+
 // random access variables
 
 static long label = 0;
 static long label_index = -1;
 static std::vector<long> labels;
-static std::unordered_map<long, std::vector<long> > surfaces;
-static std::unordered_map<long, std::vector<long> > synapses;
-static std::unordered_map<long, std::vector<long> > skeletons;
+static std::unordered_map<long, std::vector<long> > *surfaces;
+static std::unordered_map<long, std::vector<long> > *synapses;
+static std::unordered_map<long, std::vector<long> > *skeletons;
 
-
-/*static std::vector<long> connectome;
-static std::vector<long> somae;*/
-
-
-// display variables
-
-// static int segmentation_index = 1;
-// static int skeleton_method = 0;
 
 
 
@@ -194,21 +202,18 @@ static int ReadMetaData(void)
 
 
 
-static int ReadBlockData(void)
+static int ReadBlockData(long z_block_index, long y_block_index, long x_block_index, long linear_block_index)
 {
     // keep statistics
     RNTime start_time;
     start_time.Read();
 
     // clear the previous segment information
-    labels = std::vector<long>();
-    surfaces = std::unordered_map<long, std::vector<long> >();
-    synapses = std::unordered_map<long, std::vector<long> >();
-    skeletons = std::unordered_map<long, std::vector<long> >();
+    std::vector<long> block_labels = std::vector<long>();
 
     // get the segment file for this block
     char segment_filename[4096];
-    snprintf(segment_filename, 4096, "%s/%s-input_labels-%04dz-%04dy-%04dx.h5", blocks_directory, prefix, z_block_index, y_block_index, x_block_index);
+    snprintf(segment_filename, 4096, "%s/%s-input_labels-%04ldz-%04ldy-%04ldx.h5", blocks_directory, prefix, z_block_index, y_block_index, x_block_index);
 
     R3Grid **segmentations = RNReadH5File(segment_filename, "main");
     R3Grid *segmentation = segmentations[0];
@@ -232,9 +237,9 @@ static int ReadBlockData(void)
                 if (not label) continue;
 
                 // has this label been seen so far
-                if (surfaces.find(label) == surfaces.end()) {
-                    surfaces[label] = std::vector<long>();
-                    labels.push_back(label);
+                if (surfaces[linear_block_index].find(label) == surfaces[linear_block_index].end()) {
+                    surfaces[linear_block_index][label] = std::vector<long>();
+                    block_labels.push_back(label);
                 }
 
                 // go through all six adjacent neighbors
@@ -245,7 +250,7 @@ static int ReadBlockData(void)
                     (long)(segmentation->GridValue(ix, iy, iz - 1) + 0.5) != label ||
                     (long)(segmentation->GridValue(ix, iy, iz + 1) + 0.5) != label)
                 {
-                    surfaces[label].push_back(iv);
+                    surfaces[linear_block_index][label].push_back(iv);
                 }
             }
         }
@@ -254,7 +259,7 @@ static int ReadBlockData(void)
     delete segmentation;
 
     // sort the labels
-    std::sort(labels.begin(), labels.end());
+    std::sort(block_labels.begin(), block_labels.end());
 
     printf("Processed file %s in %0.2f seconds.\n", segment_filename, start_time.Elapsed());
 
@@ -263,7 +268,7 @@ static int ReadBlockData(void)
 
     // read the synapses
     char synapse_filename[4096];
-    snprintf(synapse_filename, 4096, "%s/%s-synapses-%04dz-%04dy-%04dx.pts", synapses_directory, prefix, z_block_index, y_block_index, x_block_index);
+    snprintf(synapse_filename, 4096, "%s/%s-synapses-%04ldz-%04ldy-%04ldx.pts", synapses_directory, prefix, z_block_index, y_block_index, x_block_index);
 
     FILE *fp = fopen(synapse_filename, "rb");
     if (!fp) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
@@ -298,7 +303,7 @@ static int ReadBlockData(void)
         if (fread(&label, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
         if (fread(&nsynapses, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
     
-        synapses[label] = std::vector<long>();
+        synapses[linear_block_index][label] = std::vector<long>();
 
         // ignore the global coordinates
         for (long is = 0; is < nsynapses; ++is) {
@@ -310,7 +315,7 @@ static int ReadBlockData(void)
         for (long is = 0; is < nsynapses; ++is) {
             long linear_index;
             if (fread(&linear_index, sizeof(long), 1, fp) != 1)  { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
-            synapses[label].push_back(linear_index);
+            synapses[linear_block_index][label].push_back(linear_index);
         }
 
     }
@@ -323,15 +328,15 @@ static int ReadBlockData(void)
     // start statistics
     start_time.Read();
 
-    for (unsigned long iv = 0; iv < labels.size(); ++iv) {
-        long neuron_id = labels[iv];
+    for (unsigned long iv = 0; iv < block_labels.size(); ++iv) {
+        long neuron_id = block_labels[iv];
 
         // read the synapses
         char skeleton_filename[4096];
-        snprintf(skeleton_filename, 4096, "%s/%s-skeleton-%04dz-%04dy-%04dx-ID-%012ld.pts", skeleton_directory, prefix, z_block_index, y_block_index, x_block_index, neuron_id);
+        snprintf(skeleton_filename, 4096, "%s/%s-skeleton-%04ldz-%04ldy-%04ldx-ID-%012ld.pts", skeleton_directory, prefix, z_block_index, y_block_index, x_block_index, neuron_id);
 
         FILE *fp = fopen(skeleton_filename, "rb");
-        if (!fp) { fprintf(stderr, "File not found %s.\n", skeleton_filename); continue; }
+        if (!fp) { continue; }
 
         long z_input_volume_size, y_input_volume_size, x_input_volume_size;
         long z_input_block_size, y_input_block_size, x_input_block_size;
@@ -360,7 +365,7 @@ static int ReadBlockData(void)
         if (fread(&nskeleton_points, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", skeleton_filename); return 0; }
         if (input_neuron_id != neuron_id) { fprintf(stderr, "Failed to read %s.\n", skeleton_filename); return 0; }
 
-        skeletons[neuron_id] = std::vector<long>();
+        skeletons[linear_block_index][neuron_id] = std::vector<long>();
         // ignore the global coordinates
         for (long is = 0; is < nskeleton_points; ++is) {
             long dummy_index;
@@ -371,7 +376,7 @@ static int ReadBlockData(void)
         for (long is = 0; is < nskeleton_points; ++is) {
             long linear_index;
             if (fread(&linear_index, sizeof(long), 1, fp) != 1)  { fprintf(stderr, "Failed to read %s.\n", skeleton_filename); return 0; }
-            skeletons[neuron_id].push_back(linear_index);
+            skeletons[linear_block_index][neuron_id].push_back(linear_index);
         }
 
         // close file
@@ -380,47 +385,9 @@ static int ReadBlockData(void)
 
     printf("Processed skeleton files in %0.2f seconds.\n", start_time.Elapsed());
 
-    /* TODO would like to keep this when switching blocks */
-    label_index = 0;
-    label = labels[label_index];
-
     // return success
     return 1;
 }
-
-
-
-
-/*
-
-
-static int ReadSomaeData(void)
-{
-    somae = std::vector<long>();
-
-    char somae_filename[4096];
-    sprintf(somae_filename, "volumetric_somae/surfaces/%s/%06d.pts", prefix, segmentation_index);
-    
-    FILE *fp = fopen(somae_filename, "rb"); 
-    if (!fp) { fprintf(stderr, "Failed to read %s.\n", somae_filename); return 0; }
-
-    long nsomae_points;
-    if (fread(&(grid_size[OR_Z]), sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", somae_filename); return 0; }
-    if (fread(&(grid_size[OR_Y]), sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", somae_filename); return 0; }
-    if (fread(&(grid_size[OR_X]), sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", somae_filename); return 0; }
-    if (fread(&nsomae_points, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", somae_filename); return 0; }
-
-    for (long iv = 0; iv < nsomae_points; ++iv) {
-        long voxel_index;
-        if (fread(&voxel_index, sizeof(long), 1, fp) != 1)  { fprintf(stderr, "Failed to read %s.\n", somae_filename); return 0; }
-        if (voxel_index < 0) voxel_index = -1 * voxel_index;
-        somae.push_back(voxel_index);
-    }
-
-    // return success
-    return 1;
-}*/
-
 
 
 
@@ -429,19 +396,23 @@ static int ReadSomaeData(void)
 // Drawing utility functions
 ////////////////////////////////////////////////////////////////////////
 
-static void DrawSurface(void)
+static void DrawSurface(long linear_block_index)
 {
+    long zoffset = offsets[linear_block_index][OR_Z] * block_size[OR_Z];
+    long yoffset = offsets[linear_block_index][OR_Y] * block_size[OR_Y];
+    long xoffset = offsets[linear_block_index][OR_X] * block_size[OR_X];
+
     transformation.Push();
     glPointSize(1.0);
     glBegin(GL_POINTS);
-    for (unsigned long iv = 0; iv < surfaces[label].size(); ++iv) {
+    for (unsigned long iv = 0; iv < surfaces[linear_block_index][label].size(); ++iv) {
         // faster rendering with downsampling
         if (RNRandomScalar() > downsample_rate) continue;
 
         // get the coordinates from the linear index
         long ix, iy, iz;
-        IndexToIndices(surfaces[label][iv], ix, iy, iz);
-        glVertex3f(ix, iy, iz);
+        IndexToIndices(surfaces[linear_block_index][label][iv], ix, iy, iz);
+        glVertex3f(ix + xoffset, iy + yoffset, iz + zoffset);
     }
     glEnd();
     transformation.Pop();
@@ -449,12 +420,21 @@ static void DrawSurface(void)
 
 
 
-static void DrawSynapse(void)
+static void DrawSynapse(long linear_block_index)
 {
-    for (unsigned int iv = 0; iv < synapses[label].size(); ++iv) {
+    long zoffset = offsets[linear_block_index][OR_Z] * block_size[OR_Z];
+    long yoffset = offsets[linear_block_index][OR_Y] * block_size[OR_Y];
+    long xoffset = offsets[linear_block_index][OR_X] * block_size[OR_X];
+
+    for (unsigned int iv = 0; iv < synapses[linear_block_index][label].size(); ++iv) {
         // get the coordinates from the linear index
         long ix, iy, iz;
-        IndexToIndices(synapses[label][iv], ix, iy, iz);
+        IndexToIndices(synapses[linear_block_index][label][iv], ix, iy, iz);
+
+        // add the offsets
+        ix += xoffset;
+        iy += yoffset; 
+        iz += zoffset;
 
         ix *= resolution[OR_X];
         iy *= resolution[OR_Y];
@@ -466,38 +446,26 @@ static void DrawSynapse(void)
 
 
 
-static void DrawSkeleton(void)
+static void DrawSkeleton(long linear_block_index)
 {
+    long zoffset = offsets[linear_block_index][OR_Z] * block_size[OR_Z];
+    long yoffset = offsets[linear_block_index][OR_Y] * block_size[OR_Y];
+    long xoffset = offsets[linear_block_index][OR_X] * block_size[OR_X];
+
     transformation.Push();
     glPointSize(skeleton_point_size);
     glBegin(GL_POINTS);
-    for (unsigned int iv = 0; iv < skeletons[label].size(); ++iv) {
+    for (unsigned int iv = 0; iv < skeletons[linear_block_index][label].size(); ++iv) {
         // get the coordinates from the linear index
         long ix, iy, iz;
-        IndexToIndices(skeletons[label][iv], ix, iy, iz);
-        glVertex3f(ix, iy, iz);
+        IndexToIndices(skeletons[linear_block_index][label][iv], ix, iy, iz);
+        glVertex3f(ix + xoffset, iy + yoffset, iz + zoffset);
     }
     glEnd();
 
     transformation.Pop();
 }
 
-
-/*static void DrawSomae(void)
-{
-    transformation.Push();
-    glPointSize(1.0);
-    glBegin(GL_POINTS);
-    for (unsigned int iv = 0; iv < somae.size(); ++iv) {
-        // get the coordinates from the linear index
-        long ix, iy, iz;
-        IndexToIndices(somae[iv], ix, iy, iz);
-        glVertex3f(ix, iy, iz);
-    }
-    glEnd();
-
-    transformation.Pop();
-}*/
 
 
 
@@ -548,17 +516,20 @@ void GLUTRedraw(void)
 
     // draw neuron data bounding box
     if (show_bbox) {
-        RNLoadRgb(RNRgb(not background_color[0], not background_color[1], not background_color[2]));
-        world_box.Outline();
+        for (long iu = 0; iu < ncubes; ++iu) {
+            RNLoadRgb(RNRgb(not background_color[0], not background_color[1], not background_color[2]));
+            block_boxes[iu].Outline();
+        }
     }
 
     // draw segmentation
-    RNLoadRgb(Color(label));
-    DrawSurface();
-    RNLoadRgb(RNRgb(not background_color[0], not background_color[1], not background_color[2]));
-    DrawSynapse();
-    DrawSkeleton();
-    //DrawSomae();
+    for (long iu = 0; iu < ncubes; ++iu) {
+        RNLoadRgb(Color(label));
+        DrawSurface(iu);
+        RNLoadRgb(RNRgb(not background_color[0], not background_color[1], not background_color[2]));
+        DrawSynapse(iu);
+        DrawSkeleton(iu);
+    }
 
     // epilogue
     glEnable(GL_LIGHTING);
@@ -884,11 +855,11 @@ static int ParseArgs(int argc, char** argv)
             else if (!strcmp(*argv, "-debug")) print_debug = 1;
             else if (!strcmp(*argv, "-block")) {
                 argv++; argc--;
-                z_block_index = atoi(*argv);
+                center_block_z_index = atoi(*argv);
                 argv++; argc--;
-                y_block_index = atoi(*argv);
+                center_block_y_index = atoi(*argv);
                 argv++; argc--;
-                x_block_index = atoi(*argv);
+                center_block_x_index = atoi(*argv);
             }
             else { fprintf(stderr, "Invalid program argument: %s\n", *argv); return 0; }
         } else {
@@ -923,6 +894,15 @@ int main(int argc, char** argv)
     // read the meta data for this prefix
     if (!ReadMetaData()) exit(-1);
 
+    long nzblocks = (long) ceil(volume_size[OR_Z] / (double)block_size[OR_Z]);
+    long nyblocks = (long) ceil(volume_size[OR_Y] / (double)block_size[OR_Y]);
+    long nxblocks = (long) ceil(volume_size[OR_X] / (double)block_size[OR_X]);
+
+    if (center_block_x_index > nxblocks - 2 || center_block_y_index > nyblocks - 2 || center_block_z_index > nzblocks - 2) {
+        printf("Choose a block whose +1 neighbors are in the volume\n");
+        return 0;
+    }
+
     if (print_verbose) {
         printf("%s Dataset\n", prefix);
         printf("  Resolution: %0.1lf x %0.1lf x %0.1lf\n", resolution[OR_X], resolution[OR_Y], resolution[OR_Z]);
@@ -930,21 +910,54 @@ int main(int argc, char** argv)
         printf("  Block Sizes: %ld x %ld x %ld\n", block_size[OR_X], block_size[OR_Y], block_size[OR_Z]);
     }
 
-    // read the block data
-    if (!ReadBlockData()) exit(-1);
 
-    /////////////////////////////////
-    //// Read in the voxel files ////
-    /////////////////////////////////
-/*
-    ReadSomaeData();
-    ReadSurfaceData();
-    ReadSynapseData();
-    ReadConnectomeData();
-*/
+    std::unordered_set<long> neuron_ids = std::unordered_set<long>();
+   
+    surfaces = new std::unordered_map<long, std::vector<long> >[ncubes];
+    synapses = new std::unordered_map<long, std::vector<long> >[ncubes];
+    skeletons = new std::unordered_map<long, std::vector<long> >[ncubes];
+
+    // read the block data
+    for (long iu = 0; iu < ncubes; ++iu) {
+        // initialize the maps
+        
+        surfaces[iu] = std::unordered_map<long, std::vector<long> >();
+        synapses[iu] = std::unordered_map<long, std::vector<long> >();
+        skeletons[iu] = std::unordered_map<long, std::vector<long> >();
+        
+        long block_z_index = center_block_z_index + offsets[iu][OR_Z];
+        long block_y_index = center_block_y_index + offsets[iu][OR_Y];
+        long block_x_index = center_block_x_index + offsets[iu][OR_X];
+        
+        if (!ReadBlockData(block_z_index, block_y_index, block_x_index, iu)) exit(-1);
+        
+        for (std::unordered_map<long, std::vector<long> >::iterator it = surfaces[iu].begin(); it != surfaces[iu].end(); ++it) {
+            neuron_ids.insert(it->first);
+        }
+        
+        long zoffset = offsets[iu][OR_Z] * block_size[OR_Z];
+        long yoffset = offsets[iu][OR_Y] * block_size[OR_Y];
+        long xoffset = offsets[iu][OR_X] * block_size[OR_X];
+        
+        block_boxes[iu] = R3Box(resolution[OR_X] * xoffset, resolution[OR_Y] * yoffset, resolution[OR_Z] * zoffset, resolution[OR_X] * (xoffset + block_size[OR_X]), resolution[OR_Y] * (yoffset + block_size[OR_Y]), resolution[OR_Z] * (zoffset + block_size[OR_Z]));
+    }
+
+    // create a labels vector and add neurons to it
+    labels = std::vector<long>();
+
+    for (std::unordered_set<long>::iterator it = neuron_ids.begin(); it != neuron_ids.end(); ++it) {
+        labels.push_back(*it);
+    }
+   
+    sort(labels.begin(), labels.end());
+    label_index = 0;
+    label = labels[label_index];
 
     // set world box
-    world_box = R3Box(0, 0, 0, resolution[OR_X] * block_size[OR_X], resolution[OR_Y] * block_size[OR_Y], resolution[OR_Z] * block_size[OR_Z]);
+    world_box = R3null_box;
+    for (long iu = 0; iu < ncubes; ++iu) {
+        world_box.Union(block_boxes[iu]);
+    }
 
     // get the transformation
     transformation = R3Affine(R4Matrix(resolution[OR_X], 0, 0, 0, 0, resolution[OR_Y], 0, 0, 0, 0, resolution[OR_Z], 0, 0, 0, 0, 1));
