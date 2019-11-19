@@ -72,6 +72,7 @@ static int color_cycle = 0;
 static RNScalar downsample_rate = 0.5;
 static double synapse_point_size = 100;
 static double skeleton_point_size = 3;
+static int show_axes = 1;
 
 
 
@@ -531,6 +532,38 @@ void GLUTRedraw(void)
         DrawSkeleton(iu);
     }
 
+    if (show_axes) {
+        R3Point origin = world_box.Centroid();
+        R3Vector xaxis = world_box.XRadius() * R3Vector(1, 0, 0) / 2;
+        R3Point xpoint = origin + xaxis;
+        R3Vector yaxis = world_box.YRadius() * R3Vector(0, 1, 0) / 2;
+        R3Point ypoint = origin + yaxis;
+        R3Vector zaxis = world_box.ZRadius() * R3Vector(0, 0, 1) / 2;
+        R3Point zpoint = origin + zaxis;
+
+        // draw the x axis
+        RNLoadRgb(RNred_rgb);
+        glBegin(GL_LINES);
+        glVertex3f(origin.X(), origin.Y(), origin.Z());
+        glVertex3f(xpoint.X(), xpoint.Y(), xpoint.Z());
+        glEnd();
+
+        // draw the y axis
+        RNLoadRgb(RNgreen_rgb);
+        glBegin(GL_LINES);
+        glVertex3f(origin.X(), origin.Y(), origin.Z());
+        glVertex3f(ypoint.X(), ypoint.Y(), ypoint.Z());
+        glEnd();
+
+
+        // draw the
+        RNLoadRgb(RNblue_rgb);
+        glBegin(GL_LINES);
+        glVertex3f(origin.X(), origin.Y(), origin.Z());
+        glVertex3f(zpoint.X(), zpoint.Y(), zpoint.Z());
+        glEnd();
+    }
+
     // epilogue
     glEnable(GL_LIGHTING);
 
@@ -666,6 +699,13 @@ void GLUTKeyboard(unsigned char key, int x, int y)
 
     // keys regardless of projection status
     switch(key) {
+        case 'A': 
+        case 'a': {
+            show_axes = 1 - show_axes;
+            break;
+        }
+
+
         case 'B':
         case 'b': {
             show_bbox = 1 - show_bbox;
