@@ -541,6 +541,8 @@ void GLUTRedraw(void)
         R3Vector zaxis = world_box.ZRadius() * R3Vector(0, 0, 1) / 2;
         R3Point zpoint = origin + zaxis;
 
+        glLineWidth(4.0);
+
         // draw the x axis
         RNLoadRgb(RNred_rgb);
         glBegin(GL_LINES);
@@ -562,6 +564,8 @@ void GLUTRedraw(void)
         glVertex3f(origin.X(), origin.Y(), origin.Z());
         glVertex3f(zpoint.X(), zpoint.Y(), zpoint.Z());
         glEnd();
+
+        glLineWidth(1.0);
     }
 
     // epilogue
