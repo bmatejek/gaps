@@ -270,13 +270,13 @@ static int ReadBlockData(long z_block_index, long y_block_index, long x_block_in
     // read the synapses
     char synapse_filename[4096];
     snprintf(synapse_filename, 4096, "%s/%s-synapses-%04ldz-%04ldy-%04ldx.pts", synapses_directory, prefix, z_block_index, y_block_index, x_block_index);
-
+    
     FILE *fp = fopen(synapse_filename, "rb");
     if (!fp) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
-
+    
     long z_input_volume_size, y_input_volume_size, x_input_volume_size;
     long z_input_block_size, y_input_block_size, x_input_block_size;
-
+    
     if (fread(&z_input_volume_size, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
     if (fread(&y_input_volume_size, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
     if (fread(&x_input_volume_size, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
@@ -284,15 +284,15 @@ static int ReadBlockData(long z_block_index, long y_block_index, long x_block_in
     if (z_input_volume_size != volume_size[OR_Z]) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
     if (y_input_volume_size != volume_size[OR_Y]) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
     if (x_input_volume_size != volume_size[OR_X]) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
-
+    
     if (fread(&z_input_block_size, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
     if (fread(&y_input_block_size, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
     if (fread(&x_input_block_size, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
-
+    
     if (z_input_block_size != block_size[OR_Z]) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
     if (y_input_block_size != block_size[OR_Y]) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
     if (x_input_block_size != block_size[OR_X]) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
-
+    
     long nneurons;
     if (fread(&nneurons, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
 
