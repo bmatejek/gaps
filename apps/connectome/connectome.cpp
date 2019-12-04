@@ -9,7 +9,6 @@
 #include "fglut/fglut.h"
 #include <fstream>
 #include <vector>
-#include <set>
 
 
 // GLUT defines
@@ -24,12 +23,6 @@ static const int OR_X = 2;
 
 
 
-// class declarations
-
-struct RNMeta;
-
-
-
 // program arguments
 
 // I/O flags
@@ -41,24 +34,13 @@ static const char* prefix = NULL;
 
 // program variables
 
-static double resolution[3] = { -1, -1, -1 };
-static long grid_size[3] = { -1, -1, -1 };
+static double resolution[3] = { 20, 18, 18 };
+static long volume_size[3] = { -1, -1, -1 };
+static long block_size[3] = { -1, -1, -1 };
+static long max_label = 410;
 static R3Affine transformation = R3null_affine;
 static R3Viewer *viewer = NULL;
 static R3Box world_box = R3null_box;
-
-
-
-// voxel grids
-
-static R3Grid *segmentation_grid = NULL;
-static R3Grid *synapse_grid = NULL;
-
-
-
-// connectome variables
-
-static std::vector<long> *wirings = NULL;
 
 
 
@@ -71,8 +53,8 @@ static double background_color[3] = { 0.0, 0.0, 0.0 };
 // GLUT variables
 
 static int GLUTwindow = 0;
-static int GLUTwindow_height = 1200;
-static int GLUTwindow_width = 1200;
+static int GLUTwindow_height = 720;
+static int GLUTwindow_width = 1280;
 static int GLUTmouse[2] = { 0, 0 };
 static int GLUTbutton[3] = { 0, 0, 0 };
 static int GLUTmodifiers = 0;
@@ -81,25 +63,20 @@ static int GLUTmodifiers = 0;
 
 // random access variables
 
-static std::vector<long> *segmentations = NULL;
-static long maximum_segmentation = -1;
-static std::vector<long> *synapses = NULL;
-static long maximum_synapse = -1;
-static std::set<long> *synapses_per_segment = NULL;
-static std::set<long> *segments_per_synapse = NULL;
+static std::vector<long> *surfaces;
+static std::vector<long> *synapses;
+static std::vector<long> *connectomes;
 
 
 // display variables
 
-static const int ncolor_opts = 6;
+static const int ncolor_opts = 24;
 static int show_bbox = 1;
 static int segmentation_index = 1;
-static int synapse_index = 1;
-static int synapse_centric = 0;
-static RNScalar downsample_rate = 2.0;
+static RNScalar downsample_rate = 0.5;
 static int color_cycle = 0;
-static const char *stages[2]  = { "thinning", "connectomes" };
-static int stage_index = 1;
+static double skeleton_point_size = 3;
+static double synapse_point_size = 100;
 
 
 
@@ -107,132 +84,144 @@ static int stage_index = 1;
 // Input/output functions
 ////////////////////////////////////////////////////////////////////////
 
-struct RNMeta {
-    // instance variables
-    double resolution[3];
-    char prefix[4096];
-    char segmentation_filename[4096];
-    char segmentation_dataset[128];
-    char synapse_filename[4096];
-    char synapse_dataset[128];
-};
 
-// declare here
-static RNMeta meta_data;
-
-
-
-static int
-ReadMetaData(const char *prefix)
+static int ReadSurfaceData(void)
 {
-    // update the meta data prefix
-    strncpy(meta_data.prefix, prefix, 4096);
-
-    // get the meta data filename
-    char meta_data_filename[4096];
-    sprintf(meta_data_filename, "meta/%s.meta", prefix);
-
-    // open the file
-    FILE *fp = fopen(meta_data_filename, "r");
-    if (!fp) { fprintf(stderr, "Failed to read %s\n", meta_data_filename); return 0; }
-
-    // dummy variable
-    char comment[4096];
-
-    // read in requisite information
-    if (!fgets(comment, 4096, fp)) return 0;
-    if (fscanf(fp, "%lfx%lfx%lf\n", &(meta_data.resolution[OR_X]), &(meta_data.resolution[OR_Y]), &(meta_data.resolution[OR_Z])) != 3) return 0;
-
-    // read segmentation
-    if (!fgets(comment, 4096, fp)) return 0;
-    if (fscanf(fp, "%s %s\n", meta_data.segmentation_filename, meta_data.segmentation_dataset) != 2) return 0;
-
-    // skip synapse
-    if (!fgets(comment, 4096, fp)) return 0;
-    if (fscanf(fp, "%s %s\n", meta_data.synapse_filename, meta_data.synapse_dataset) != 2) return 0;
-
-    // update the global resolution
-    for (int dim = 0; dim <= 2; ++dim)
-        resolution[dim] = meta_data.resolution[dim];
-
-    // close the file
-    fclose(fp);
-
-    // return success
-    return 1;
-}
-
-
-
-static int ReadData(void)
-{
-    // start statistics
-    RNTime start_time;
-    start_time.Read();
-
-    R3Grid **segmentation_grids = RNReadH5File(meta_data.segmentation_filename, meta_data.segmentation_dataset);
-    segmentation_grid = segmentation_grids[0];
-    delete[] segmentation_grids;
-
-    R3Grid **synapse_grids = RNReadH5File(meta_data.synapse_filename, meta_data.synapse_dataset);
-    synapse_grid = synapse_grids[0];
-    delete[] synapse_grids;
-    
-    grid_size[OR_X] = segmentation_grid->XResolution();
-    grid_size[OR_Y] = segmentation_grid->YResolution();
-    grid_size[OR_Z] = segmentation_grid->ZResolution();
-
-    // get the maximum values for each grid
-    maximum_segmentation = (long) (segmentation_grid->Maximum() + 0.5) + 1;
-    maximum_synapse = (long) (synapse_grid->Maximum() + 0.5) + 1;
-
-    // print statistics
-    if(print_verbose) {
-        printf("Read voxel grids...\n");
-        printf("  Time = %.2f seconds\n", start_time.Elapsed());
-        printf("  Grid Size = (%ld %ld %ld)\n", grid_size[OR_X], grid_size[OR_Y], grid_size[OR_Z]);
-        printf("  Resolution = (%0.2lf %0.2lf %0.2lf)\n", resolution[OR_X], resolution[OR_Y], resolution[OR_Z]);
+    surfaces = new std::vector<long>[max_label];
+    for (long iv = 0; iv < max_label; ++iv) {
+        surfaces[iv] = std::vector<long>();
     }
 
-    // return success
-    return 1;
-}
+    for (long label = 1; label < max_label; ++label) {
+        char surface_filename[4096];
+        sprintf(surface_filename, "surfaces/%s-%06ld.pts", prefix, label);
 
+        FILE *fp = fopen(surface_filename, "rb");
+        if (!fp) { fprintf(stderr, "Failed to read %s.\n", surface_filename); continue; }
 
+        long nsurface_points, input_label;
+        if (fread(&(volume_size[OR_Z]), sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", surface_filename); continue; }
+        if (fread(&(volume_size[OR_Y]), sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", surface_filename); continue; }
+        if (fread(&(volume_size[OR_X]), sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", surface_filename); continue; }
+        if (fread(&(block_size[OR_Z]), sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", surface_filename); continue; }
+        if (fread(&(block_size[OR_Y]), sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", surface_filename); continue; }
+        if (fread(&(block_size[OR_X]), sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", surface_filename); continue; }
+        if (fread(&input_label, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", surface_filename); continue; }
+        if (fread(&nsurface_points, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", surface_filename); continue; }
+        assert (input_label == label);
 
-static int
-ReadConnectomeData(void)
-{
-    if (wirings) delete[] wirings;
-    wirings = new std::vector<long>[maximum_segmentation];
-
-    for (long iv = 0; iv < maximum_segmentation; ++iv) {
-        wirings[iv] = std::vector<long>();
-    
-        char input_filename[4096];      
-        sprintf(input_filename, "%s/%s/%06ld.pts", stages[stage_index], prefix, iv);
-
-        FILE *fp = fopen(input_filename, "rb");
-        if (!fp) { continue; }
-
-        long nelements;
-        long zres, yres, xres;
-        if (fread(&zres, sizeof(long), 1, fp) != 1) return 0;
-        if (fread(&yres, sizeof(long), 1, fp) != 1) return 0;
-        if (fread(&xres, sizeof(long), 1, fp) != 1) return 0;
-        if (fread(&nelements, sizeof(long), 1, fp) != 1) return 0;
-        
-        for (long ie = 0; ie < nelements; ++ie) {
-            long element;
-            if (fread(&element, sizeof(long), 1, fp) != 1) return 0;
-            wirings[iv].push_back(element);
+        for (long iv = 0; iv < nsurface_points; ++iv) {
+            long voxel_index;
+            if (fread(&voxel_index, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", surface_filename); continue; }
+            surfaces[label].push_back(voxel_index);
         }
+
         fclose(fp);
     }
 
     // return success
     return 1;
 }
+
+
+
+static int ReadSynapseData(void)
+{
+    synapses = new std::vector<long>[max_label];
+    for (long iv = 0; iv < max_label; ++iv) {
+        synapses[iv] = std::vector<long>();
+    }
+
+    long nzblocks = volume_size[OR_Z] / block_size[OR_Z];
+    long nyblocks = volume_size[OR_Y] / block_size[OR_Y];
+    long nxblocks = volume_size[OR_X] / block_size[OR_X];
+
+    for (long iz = 0; iz < nzblocks; ++iz) {
+        for (long iy = 0; iy < nyblocks; ++iy) {
+            for (long ix = 0; ix < nxblocks; ++ix) {
+                char synapse_filename[4096];
+                sprintf(synapse_filename, "synapses/%s-synapses-%04ldz-%04ldy-%04ldx.pts", prefix, iz, iy, ix);
+
+                FILE *fp = fopen(synapse_filename, "rb");
+                if (!fp) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
+            
+                if (fread(&(volume_size[OR_Z]), sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
+                if (fread(&(volume_size[OR_Y]), sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
+                if (fread(&(volume_size[OR_X]), sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
+                if (fread(&(block_size[OR_Z]), sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
+                if (fread(&(block_size[OR_Y]), sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
+                if (fread(&(block_size[OR_X]), sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
+
+                long nneurons;
+                if (fread(&nneurons, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
+                for (long il = 0; il < nneurons; ++il) {
+                    long label, nsynapses;
+                    if (fread(&label, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
+                    if (fread(&nsynapses, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
+                    for (long iv = 0; iv < nsynapses; ++iv) {
+                        long voxel_index;
+                        if (fread(&voxel_index, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
+                        synapses[label].push_back(voxel_index);
+                    }
+                    // ignore local indices
+                    for (long iv = 0; iv < nsynapses; ++iv) {
+                        long dummy;
+                        if (fread(&dummy, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", synapse_filename); return 0; }
+                    }
+                }
+
+                fclose(fp);
+            }
+        }
+    }
+
+    // return success 
+    return 1;
+}
+
+
+
+static int ReadConnectomeData(void)
+{
+    connectomes = new std::vector<long>[max_label];
+    for (long iv = 0; iv < max_label; ++iv) {
+        connectomes[iv] = std::vector<long>();
+    }
+
+    for (long label = 0; label < max_label; ++label) {
+        char connectome_filename[4096];
+        sprintf(connectome_filename, "skeletons/%s-connectomes-ID-%012d.pts", prefix, label);
+
+        FILE *fp = fopen(connectome_filename, "rb"); 
+        if (!fp) { fprintf(stderr, "Failed to read %s.\n", connectome_filename); continue; }
+
+        if (fread(&(volume_size[OR_Z]), sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", connectome_filename); return 0; }
+        if (fread(&(volume_size[OR_Y]), sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", connectome_filename); return 0; }
+        if (fread(&(volume_size[OR_X]), sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", connectome_filename); return 0; }
+        if (fread(&(block_size[OR_Z]), sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", connectome_filename); return 0; }
+        if (fread(&(block_size[OR_Y]), sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", connectome_filename); return 0; }
+        if (fread(&(block_size[OR_X]), sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", connectome_filename); return 0; }
+
+        long nskeleton_points, input_label;
+        if (fread(&input_label, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", connectome_filename); continue; }
+        if (fread(&nskeleton_points, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", connectome_filename); continue; }
+        assert (input_label == label);
+
+        for (long iv = 0; iv < nskeleton_points; ++iv) {
+            long voxel_index;
+            if (fread(&voxel_index, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", connectome_filename); continue; }
+            connectomes[label].push_back(voxel_index);
+        }
+
+        fclose(fp);
+
+    }
+
+    // return success
+    return 1;
+}
+
+
 
 
 ////////////////////////////////////////////////////////////////////////
@@ -242,16 +231,9 @@ ReadConnectomeData(void)
 static void IndexToIndices(long index, long& ix, long& iy, long& iz)
 {
   // Set indices of grid value at index
-  iz = index / (grid_size[OR_X] * grid_size[OR_Y]);
-  iy = (index - iz * grid_size[OR_X] * grid_size[OR_Y]) / grid_size[OR_X];
-  ix = index % grid_size[OR_X];
-}
-
-
-
-static long IndicesToIndex(long ix, long iy, long iz)
-{
-    return iz * grid_size[OR_X] * grid_size[OR_Y] + iy * grid_size[OR_X] + ix;
+  iz = index / (volume_size[OR_X] * volume_size[OR_Y]);
+  iy = (index - iz * volume_size[OR_X] * volume_size[OR_Y]) / volume_size[OR_X];
+  ix = index % volume_size[OR_X];
 }
 
 
@@ -271,183 +253,60 @@ static RNRgb Color(unsigned long value)
 
 
 ////////////////////////////////////////////////////////////////////////
-// Preprocessing functions
-////////////////////////////////////////////////////////////////////////
-
-static void Preprocessing(void)
-{
-    RNTime start_time;
-    start_time.Read();
-
-    // create a vector for each valid ID
-    segmentations = new std::vector<long>[maximum_segmentation];
-    synapses_per_segment = new std::set<long>[maximum_segmentation];
-    for (long iv = 0; iv < maximum_segmentation; ++iv) {
-        segmentations[iv] = std::vector<long>();
-        synapses_per_segment[iv] = std::set<long>();
-    }
-    synapses = new std::vector<long>[maximum_synapse];
-    segments_per_synapse = new std::set<long>[maximum_synapse];
-    for (long iv = 0; iv < maximum_synapse; ++iv) {
-        synapses[iv] = std::vector<long>();
-        segments_per_synapse[iv] = std::set<long>();
-    }
-
-
-    // go through all voxels to see if it belongs to the boundary
-    for (int iz = 1; iz < grid_size[OR_Z] - 1; ++iz) {
-        for (int iy = 1; iy < grid_size[OR_Y] - 1; ++iy) {
-            for (int ix = 1; ix < grid_size[OR_X] - 1; ++ix) {
-                long iv = IndicesToIndex(ix, iy, iz);
-
-                long segment = (long) (segmentation_grid->GridValue(ix, iy, iz) + 0.5);
-
-                // skip background
-                if (!segment) continue;
-
-                // go through all six adjacent neighbors for the segmentations
-                if ((long)(segmentation_grid->GridValue(ix - 1, iy, iz) + 0.5) != segment ||
-                    (long)(segmentation_grid->GridValue(ix + 1, iy, iz) + 0.5) != segment ||
-                    (long)(segmentation_grid->GridValue(ix, iy - 1, iz) + 0.5) != segment ||
-                    (long)(segmentation_grid->GridValue(ix, iy + 1, iz) + 0.5) != segment ||
-                    (long)(segmentation_grid->GridValue(ix, iy, iz - 1) + 0.5) != segment ||
-                    (long)(segmentation_grid->GridValue(ix, iy, iz + 1) + 0.5) != segment)
-                {
-                    segmentations[segment].push_back(iv);
-                }
-
-                // add to this segment's list of synapses
-                long synapse = (long) (synapse_grid->GridValue(ix, iy, iz) + 0.5);
-                synapses_per_segment[segment].insert(synapse);
-            }
-        }
-    }
-
-    // go through all voxels to see if it belongs to the boundary
-    for (int iz = 1; iz < grid_size[OR_Z] - 1; ++iz) {
-        for (int iy = 1; iy < grid_size[OR_Y] - 1; ++iy) {
-            for (int ix = 1; ix < grid_size[OR_X] - 1; ++ix) {
-                long iv = IndicesToIndex(ix, iy, iz);
-
-                long synapse = (long) (synapse_grid->GridValue(ix, iy, iz) + 0.5);
-                
-                // skip background
-                if (!synapse) continue;
-
-                // go through all six adjacent neighbors for the synapses
-                if ((long)(synapse_grid->GridValue(ix - 1, iy, iz) + 0.5) != synapse ||
-                    (long)(synapse_grid->GridValue(ix + 1, iy, iz) + 0.5) != synapse ||
-                    (long)(synapse_grid->GridValue(ix, iy - 1, iz) + 0.5) != synapse ||
-                    (long)(synapse_grid->GridValue(ix, iy + 1, iz) + 0.5) != synapse ||
-                    (long)(synapse_grid->GridValue(ix, iy, iz - 1) + 0.5) != synapse ||
-                    (long)(synapse_grid->GridValue(ix, iy, iz + 1) + 0.5) != synapse)
-                {
-                    synapses[synapse].push_back(iv);
-                }
-
-                // add to this synapses's list of segments
-                long segment = (long) (segmentation_grid->GridValue(ix, iy, iz) + 0.5);
-                segments_per_synapse[synapse].insert(segment);
-            }
-        }
-    }
-
-    if (print_verbose) {
-        printf("Preprocessing...\n");
-        printf("  Time = %0.2f seconds\n", start_time.Elapsed());
-        printf("  Maximum Segment = %ld\n", maximum_segmentation);
-    }
-
-    delete segmentation_grid;
-    delete synapse_grid;
-}
-
-
-
-////////////////////////////////////////////////////////////////////////
 // Drawing utility functions
 ////////////////////////////////////////////////////////////////////////
 
-static void DrawSegment(int segment_index)
+static void DrawSurface(void)
 {
     transformation.Push();
     glPointSize(1.0);
     glBegin(GL_POINTS);
-    for (unsigned int iv = 0; iv < segmentations[segment_index].size(); ++iv) {
+    for (unsigned long iv = 0; iv < surfaces[segmentation_index].size(); ++iv) {
         // faster rendering with downsampling
-        if (RNRandomScalar() > 1.0 / downsample_rate) continue;
+        if (RNRandomScalar() > downsample_rate) continue;
 
         // get the coordinates from the linear index
         long ix, iy, iz;
-        IndexToIndices(segmentations[segment_index][iv], ix, iy, iz);
+        IndexToIndices(surfaces[segmentation_index][iv], ix, iy, iz);
         glVertex3f(ix, iy, iz);
     }
     glEnd();
-
     transformation.Pop();
 }
 
 
 
-static void DrawSynapse(int synapse_index)
+static void DrawSynapse(void)
 {
-    transformation.Push();
-    glPointSize(1.0);
-    glBegin(GL_POINTS);
-    for (unsigned int iv = 0; iv < synapses[synapse_index].size(); ++iv) {
-        // faster rendering with downsampling
-        if (RNRandomScalar() > 1.0 / downsample_rate) continue;
-
+    for (unsigned int iv = 0; iv < synapses[segmentation_index].size(); ++iv) {
         // get the coordinates from the linear index
         long ix, iy, iz;
-        IndexToIndices(synapses[synapse_index][iv], ix, iy, iz);
-        glVertex3f(ix, iy, iz);
-    }
-    glEnd();
+        IndexToIndices(synapses[segmentation_index][iv], ix, iy, iz);
 
-    transformation.Pop();
+        ix *= resolution[OR_X];
+        iy *= resolution[OR_Y];
+        iz *= resolution[OR_Z];
+
+        R3Sphere(R3Point(ix, iy, iz), synapse_point_size).Draw();
+    }
 }
 
 
-static void DrawConnectome(int segment_index)
+
+static void DrawConnectome(void)
 {
-    // sizes for skeleton joints
-    const double joint_size = 4;
-    const double endpoint_size = 60;
-
     transformation.Push();
-
-    glPointSize(joint_size);
+    glPointSize(skeleton_point_size);
     glBegin(GL_POINTS);
-    for (unsigned long is = 0; is < wirings[segment_index].size(); ++is) {
-        long iv = wirings[segment_index][is];
-        bool endpoint = (iv < 0);
-        if (endpoint) continue;
+    for (unsigned int iv = 0; iv < connectomes[segmentation_index].size(); ++iv) {
+        // get the coordinates from the linear index
         long ix, iy, iz;
-        IndexToIndices(iv, ix, iy, iz);
+        IndexToIndices(connectomes[segmentation_index][iv], ix, iy, iz);
         glVertex3f(ix, iy, iz);
     }
     glEnd();
-    glPointSize(1.0);
 
     transformation.Pop();
-
-    for (unsigned long is = 0; is < wirings[segment_index].size(); ++is) {
-        // get the coordinates from the linear index
-        long iv = wirings[segment_index][is];
-        bool endpoint = (iv < 0);
-        if (not endpoint) continue;
-        iv = -1 * iv;
-        long ix, iy, iz;
-        IndexToIndices(iv, ix, iy, iz);
-
-        // convert to world coordinates since transformation is popped
-        ix = resolution[OR_X] * ix;
-        iy = resolution[OR_Y] * iy;
-        iz = resolution[OR_Z] * iz;
-
-        R3Sphere(R3Point(ix, iy, iz), endpoint_size).Draw();
-    }
 }
 
 
@@ -503,30 +362,12 @@ void GLUTRedraw(void)
         world_box.Outline();
     }
 
-    if (synapse_centric) {
-        // draw synapse
-        RNLoadRgb(Color(synapse_index));
-        DrawSynapse(synapse_index);
-        for (std::set<long>::iterator it = segments_per_synapse[synapse_index].begin(); it != segments_per_synapse[synapse_index].end(); ++it) {
-            long segment = *it;
-            RNLoadRgb(Color(segment));
-            DrawSegment(segment);
-            RNLoadRgb(RNRgb(not background_color[0], not background_color[1], not background_color[2]));
-            DrawConnectome(segment);
-        }
-    }
-    else {
-        // draw segmentation
-        RNLoadRgb(Color(segmentation_index));
-        DrawSegment(segmentation_index);
-        RNLoadRgb(RNRgb(not background_color[0], not background_color[1], not background_color[2]));
-        DrawConnectome(segmentation_index);
-        for (std::set<long>::iterator it = synapses_per_segment[segmentation_index].begin(); it != synapses_per_segment[segmentation_index].end(); ++it) {
-            long synapse = *it;
-            RNLoadRgb(Color(synapse));
-            DrawSynapse(synapse);
-        }
-    }
+    // draw segmentation
+    RNLoadRgb(Color(segmentation_index));
+    DrawSurface();
+    RNLoadRgb(RNRgb(not background_color[0], not background_color[1], not background_color[2]));
+    DrawSynapse();
+    DrawConnectome();
 
     // epilogue
     glEnable(GL_LIGHTING);
@@ -623,39 +464,19 @@ void GLUTSpecial(int key, int x, int y)
 
     switch(key) {
         case GLUT_KEY_LEFT: {
-            if (synapse_centric) {
-                --synapse_index;    
-                if (synapse_index < 0)  
-                    synapse_index = 0;
+            --segmentation_index;
+            if (segmentation_index < 1) segmentation_index = 1;
 
-                printf("Synapse %d\n", synapse_index);
-            }
-            else {
-                --segmentation_index;
-                if (segmentation_index < 0)
-                    segmentation_index = 0;
-
-                printf("Segment %d\n", segmentation_index);                
-            }
+            printf("Segment %d\n", segmentation_index);                
 
             break;
         }
 
         case GLUT_KEY_RIGHT: {
-            if (synapse_centric) {
-                ++synapse_index;
-                if (synapse_index >= maximum_synapse)
-                    synapse_index = maximum_synapse - 1;
+            ++segmentation_index;
+            if (segmentation_index > max_label - 1) segmentation_index = max_label - 1;
 
-                printf("Synapse %d\n", synapse_index);
-            }
-            else {
-                ++segmentation_index;
-                if (segmentation_index >= maximum_segmentation)
-                    segmentation_index = maximum_segmentation - 1;
-
-                printf("Segment %d\n", segmentation_index);
-            }
+            printf("Segment %d\n", segmentation_index);
 
             break;    
         }
@@ -693,6 +514,25 @@ void GLUTKeyboard(unsigned char key, int x, int y)
             break;
         }
 
+        case 'D': 
+        case 'd': {
+            if (not color_cycle) color_cycle = ncolor_opts - 1;
+            else color_cycle = (color_cycle - 1) % ncolor_opts;
+            break;
+        }
+
+        case 'E': 
+        case 'e': {
+            synapse_point_size -= 5;
+            break;
+        }
+
+        case 'F':
+        case 'f': {
+            synapse_point_size += 5;
+            break;
+        }
+
         case 'P':
         case 'p': {
             const R3Camera &camera = viewer->Camera();
@@ -715,16 +555,17 @@ void GLUTKeyboard(unsigned char key, int x, int y)
             break;
         }
 
-        case 'S': 
-        case 's': {
-            synapse_centric = 1 - synapse_centric;
+        case 'X':
+        case 'x': {
+            downsample_rate += 0.01;
+            printf("Downsample Rate: %lf\n", downsample_rate);
             break;
         }
 
-        case 'T':
-        case 't': {
-            stage_index = 1 - stage_index;
-            ReadConnectomeData();
+        case 'Z':
+        case 'z': {
+            downsample_rate -= 0.01;
+            printf("Downsample Rate: %lf\n", downsample_rate);
             break;
         }
 
@@ -849,6 +690,14 @@ static int ParseArgs(int argc, char** argv)
             if (!strcmp(*argv, "-v")) print_verbose = 1;
             else if (!strcmp(*argv, "-debug")) print_debug = 1;
             else if (!strcmp(*argv, "-start_index")) { argv++; argc--; segmentation_index = atoi(*argv); }
+            else if (!strcmp(*argv, "-resolution")) { 
+                argv++; argc--;
+                resolution[OR_X] = atof(*argv);
+                argv++; argc--;
+                resolution[OR_Y] = atof(*argv);
+                argv++; argc--;
+                resolution[OR_Z] = atof(*argv);
+            }
             else { fprintf(stderr, "Invalid program argument: %s\n", *argv); return 0; }
         } else {
             if (!prefix) prefix = *argv;
@@ -873,6 +722,7 @@ static int ParseArgs(int argc, char** argv)
 // Main program
 ////////////////////////////////////////////////////////////////////////
 
+
 int main(int argc, char** argv)
 {
     // parse program arguments
@@ -882,14 +732,13 @@ int main(int argc, char** argv)
     //// Read in the voxel files ////
     /////////////////////////////////
 
-    if (!ReadMetaData(prefix)) exit(-1);
-    if (!ReadData()) exit(-1);
-    if (!ReadConnectomeData()) exit(-1);
+    //ReadSomaeData();
+    ReadSurfaceData();
+    if (not ReadSynapseData()) return 0; 
+    ReadConnectomeData();
 
-    // get all of the preprocessing time
-    Preprocessing();
     // set world box
-    world_box = R3Box(0, 0, 0, resolution[OR_X] * grid_size[OR_X], resolution[OR_Y] * grid_size[OR_Y], resolution[OR_Z] * grid_size[OR_Z]);
+    world_box = R3Box(0, 0, 0, resolution[OR_X] * volume_size[OR_X], resolution[OR_Y] * volume_size[OR_Y], resolution[OR_Z] * volume_size[OR_Z]);
 
     // get the transformation
     transformation = R3Affine(R4Matrix(resolution[OR_X], 0, 0, 0, 0, resolution[OR_Y], 0, 0, 0, 0, resolution[OR_Z], 0, 0, 0, 0, 1));
