@@ -96,6 +96,8 @@ static int ReadSurfaceData(void)
         char surface_filename[4096];
         sprintf(surface_filename, "surfaces/%s-%06ld.pts", prefix, label);
 
+        printf("%s\n", surface_filename);
+
         FILE *fp = fopen(surface_filename, "rb");
         if (!fp) { fprintf(stderr, "Failed to read %s.\n", surface_filename); continue; }
 
@@ -190,7 +192,7 @@ static int ReadConnectomeData(void)
 
     for (long label = 0; label < max_label; ++label) {
         char connectome_filename[4096];
-        sprintf(connectome_filename, "skeletons/%s-connectomes-ID-%012d.pts", prefix, label);
+        sprintf(connectome_filename, "skeletons/%s-connectomes-ID-%012ld.pts", prefix, label);
 
         FILE *fp = fopen(connectome_filename, "rb"); 
         if (!fp) { fprintf(stderr, "Failed to read %s.\n", connectome_filename); continue; }
