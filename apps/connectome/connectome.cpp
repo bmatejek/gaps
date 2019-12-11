@@ -114,7 +114,7 @@ static int ReadSurfaceData(void)
 
         for (long iv = 0; iv < nsurface_points; ++iv) {
             long voxel_index;
-            if (fread(&voxel_index, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", surface_filename); continue; }
+            if (fread(&voxel_index, sizeof(long), 1, fp) != 1) { fprintf(stderr, "Failed to read %s.\n", surface_filename); break; }
             surfaces[label].push_back(voxel_index);
         }
 
