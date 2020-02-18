@@ -48,7 +48,6 @@ release:
 target: 
 	cd fglut; $(MAKE) $(TARGET)
 	cd jpeg; $(MAKE) $(TARGET)
-	cd NeuronML; $(MAKE) $(TARGET)
 	cd png; $(MAKE) $(TARGET)
 	cd R2Shapes; $(MAKE) $(TARGET)
 	cd R3Graphics; $(MAKE) $(TARGET)
