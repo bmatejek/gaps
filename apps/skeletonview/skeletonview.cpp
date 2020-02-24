@@ -38,7 +38,6 @@ struct RNMeta;
 // I/O flags
 static int print_debug = 0;
 static int print_verbose = 0;
-static int benchmark = 0;
 static const char* prefix = NULL;
 
 
@@ -61,9 +60,7 @@ static R3Grid *grid = NULL;
 
 // skeleton variables
 
-static std::vector<long> *thinning_skeletons = NULL;
-static std::vector<long> *medial_skeletons = NULL;
-static std::vector<long> *teaser_skeletons = NULL;
+static std::vector<long> *skeletons = NULL;
 
 
 
@@ -95,54 +92,17 @@ static long maximum_segmentation = -1;
 
 static const int ncolor_opts = 6;
 static const int nskeleton_opts = 4;
-static const int nteaser_scales = 6;
-static const int nteaser_buffers = 5;
-static const int nastar_expansions = 9;
-static const int nresolutions = 18;
 
 static int show_vectors = 1;
 static int show_bbox = 1;
 static int segmentation_index = 1;
-static int skeleton_type = 0;
 static RNScalar downsample_rate = 2.0;
 static int color_cycle = 0;
 
-// variables that enable cycling through skeletons
-static long teaser_scales[nteaser_scales] = { 7, 9, 11, 13, 15, 17 };
-static long teaser_buffers[nteaser_buffers] = { 1, 2, 3, 4, 5 };
-static long resolutions[nresolutions][3] = {
-    { 30, 30, 30 },
-    { 40, 40, 40 },
-    { 50, 50, 50 },
-    { 60, 60, 60 },
-    { 70, 70, 70 },
-    { 80, 80, 80 },
-    { 90, 90, 90 },
-    { 100, 100, 100 },
-    { 110, 110, 110 },
-    { 120, 120, 120 },
-    { 130, 130, 130 },
-    { 140, 140, 140 },
-    { 150, 150, 150 },
-    { 160, 160, 160 },
-    { 170, 170, 170 },
-    { 180, 180, 180 },
-    { 190, 190, 190 },
-    { 200, 200, 200 },
-};
-static long astar_expansions[nastar_expansions] = { 0, 11, 13, 15, 17, 19, 21, 23, 25 };
-static short teaser_scale_index = 2;
-static short teaser_buffer_index = 1;
-static short resolution_index = 5;
-static short astar_expansion_index = 0;
 
-static long astar_expansion = astar_expansions[astar_expansion_index];
-static long teaser_scale = teaser_scales[teaser_scale_index];
-static long teaser_buffer = teaser_buffers[teaser_buffer_index];
-static long *downsample_resolution = resolutions[resolution_index];
+static long downsample_resolution[3] = { 80, 80, 80 };
 
-static std::unordered_map<long, R3Vector> *thinning_endpoint_vectors = NULL;
-static std::unordered_map<long, R3Vector> *medial_endpoint_vectors = NULL;
+static std::unordered_map<long, R3Vector> *endpoint_vectors = NULL;
 
 
 
@@ -154,17 +114,10 @@ struct RNMeta {
     // instance variables
     double resolution[3];
     char prefix[4096];
-    char gold_filename[4096];
-    char gold_dataset[128];
-    char image_filename[4096];
-    char image_dataset[128];
-    char mask_filename[4096];
-    char mask_dataset[128];
     char rhoana_filename[4096];
     char rhoana_dataset[128];
     long grid_size[3];
     R3Box world_box;
-    R3Box scaled_box;
 };
 
 // declare here
@@ -193,37 +146,9 @@ ReadMetaData(const char *prefix)
     if (!fgets(comment, 4096, fp)) return 0;
     if (fscanf(fp, "%lfx%lfx%lf\n", &(meta_data.resolution[IB_X]), &(meta_data.resolution[IB_Y]), &(meta_data.resolution[IB_Z])) != 3) return 0;
 
-    // skip affinities
-    if (!fgets(comment, 4096, fp)) return 0;
-    if (!fgets(comment, 4096, fp)) return 0;
-
-    // skip boundaries
-    if (!fgets(comment, 4096, fp)) return 0;
-    if (!fgets(comment, 4096, fp)) return 0;
-
-    // read in gold information
-    if (!fgets(comment, 4096, fp)) return 0;
-    if (fscanf(fp, "%s %s\n", meta_data.gold_filename, meta_data.gold_dataset) != 2) return 0;
-
-    // read image
-    if (!fgets(comment, 4096, fp)) return 0;
-    if (!fgets(comment, 4096, fp)) return 0;
-
-    // skip mask
-    if (!fgets(comment, 4096, fp)) return 0;
-    if (!fgets(comment, 4096, fp)) return 0;
-
     // read segmentation
     if (!fgets(comment, 4096, fp)) return 0;
     if (fscanf(fp, "%s %s\n", meta_data.rhoana_filename, meta_data.rhoana_dataset) != 2) return 0;
-
-    // skip synapse
-    if (!fgets(comment, 4096, fp)) return 0;
-    if (!fgets(comment, 4096, fp)) return 0;
-
-    // skip world box
-    if (!fgets(comment, 4096, fp)) return 0;
-    if (!fgets(comment, 4096, fp)) return 0;
 
     // read in requisite information
     if (!fgets(comment, 4096, fp)) return 0;
@@ -234,7 +159,6 @@ ReadMetaData(const char *prefix)
         resolution[dim] = meta_data.resolution[dim];
 
     meta_data.world_box = R3null_box;
-    meta_data.scaled_box = R3null_box;
 
     // close the file
     fclose(fp);
@@ -248,21 +172,10 @@ ReadMetaData(const char *prefix)
 static int
 ReadSkeletonData(void)
 {
-    if (thinning_skeletons) { delete[] thinning_skeletons; thinning_skeletons = NULL; }
-    if (medial_skeletons) { delete[] medial_skeletons; medial_skeletons = NULL; }
-    if (teaser_skeletons) { delete[] teaser_skeletons; teaser_skeletons = NULL; }
-
-    printf("Resolution: (%ld, %ld, %ld)\n", downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z]);
-    printf("  TEASER:\n");
-    printf("    Scale: %ld\n", teaser_scale);
-    printf("    Buffer: %ld\n", teaser_buffer);
-    printf("  Thinning + Medial Axis:\n");
-    printf("    A*: %ld\n", astar_expansion);
-
+    if (skeletons) { delete[] skeletons; skeletons = NULL; }
 
     char input_filename[4096];
-    if (benchmark) sprintf(input_filename, "benchmarks/skeleton/%s-thinning-%03ldx%03ldx%03ld-upsample-%02ld-skeleton.pts", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z], astar_expansion);
-    else sprintf(input_filename, "skeletons/%s/thinning-%03ldx%03ldx%03ld-upsample-%02ld-skeleton.pts", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z], astar_expansion);
+    sprintf(input_filename, "skeletons/%s/thinning-%03ldx%03ldx%03ld-upsample-skeleton.pts", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z]);
 
     FILE *fp = fopen(input_filename, "rb");
     long skeleton_maximum_segmentation;
@@ -275,9 +188,9 @@ ReadSkeletonData(void)
         assert (input_grid_size[IB_Z] == grid_size[IB_Z] and input_grid_size[IB_Y] == grid_size[IB_Y] and input_grid_size[IB_X] == grid_size[IB_X]);
         assert (skeleton_maximum_segmentation == maximum_segmentation);
 
-        thinning_skeletons = new std::vector<long>[maximum_segmentation];
+        skeletons = new std::vector<long>[maximum_segmentation];
         for (long iv = 0; iv < maximum_segmentation; ++iv) {
-            thinning_skeletons[iv] = std::vector<long>();
+            skeletons[iv] = std::vector<long>();
 
             long nelements; 
             if (fread(&nelements, sizeof(long), 1, fp) != 1) return 0;
@@ -285,14 +198,14 @@ ReadSkeletonData(void)
                 long element;
                 if (fread(&element, sizeof(long), 1, fp) != 1) return 0;
 
-                thinning_skeletons[iv].push_back(element);
+                skeletons[iv].push_back(element);
             }
         }  
         fclose(fp);
     }
 
-    if (benchmark) sprintf(input_filename, "benchmarks/skeleton/%s-medial-axis-%03ldx%03ldx%03ld-upsample-%02ld-skeleton.pts", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z], astar_expansion);
-    else sprintf(input_filename, "skeletons/%s/medial-axis-%03ldx%03ldx%03ld-upsample-%02ld-skeleton.pts", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z], astar_expansion);
+
+    sprintf(input_filename, "skeletons/%s/thinning-%03ldx%03ldx%03ld-endpoint-vectors.vec", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z]);
 
     fp = fopen(input_filename, "rb");
     if (fp) {
@@ -303,65 +216,9 @@ ReadSkeletonData(void)
         assert (input_grid_size[IB_Z] == grid_size[IB_Z] and input_grid_size[IB_Y] == grid_size[IB_Y] and input_grid_size[IB_X] == grid_size[IB_X]);
         assert (skeleton_maximum_segmentation == maximum_segmentation);
 
-        medial_skeletons = new std::vector<long>[maximum_segmentation];
-        for (long iv = 0; iv < maximum_segmentation; ++iv) {
-            medial_skeletons[iv] = std::vector<long>();
-
-            long nelements;
-            if (fread(&nelements, sizeof(long), 1, fp) != 1) return 0;
-            for (long ie = 0; ie < nelements; ++ie) {
-                long element;
-                if (fread(&element, sizeof(long), 1, fp) != 1) return 0;
-                medial_skeletons[iv].push_back(element);
-            }
-        }
-        fclose(fp);
-    }
-
-    if (benchmark) sprintf(input_filename, "benchmarks/skeleton/%s-teaser-%03ldx%03ldx%03ld-upsample-%02ld-%02ld-00-skeleton.pts", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z], teaser_scale, teaser_buffer);
-    else sprintf(input_filename, "skeletons/%s/teaser-%03ldx%03ldx%03ld-upsample-%02ld-%02ld-00-skeleton.pts", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z], teaser_scale, teaser_buffer);
-
-    fp = fopen(input_filename, "rb");
-    if (fp) {
-        if (fread(&input_grid_size[IB_Z], sizeof(long), 1, fp) != 1) return 0;
-        if (fread(&input_grid_size[IB_Y], sizeof(long), 1, fp) != 1) return 0;
-        if (fread(&input_grid_size[IB_X], sizeof(long), 1, fp) != 1) return 0;
-        if (fread(&skeleton_maximum_segmentation, sizeof(long), 1, fp) != 1) return 0;
-        assert (input_grid_size[IB_Z] == grid_size[IB_Z] and input_grid_size[IB_Y] == grid_size[IB_Y] and input_grid_size[IB_X] == grid_size[IB_X]);
-        assert (skeleton_maximum_segmentation == maximum_segmentation);
-
-        teaser_skeletons = new std::vector<long>[maximum_segmentation];
-        for (long iv = 0; iv < maximum_segmentation; ++iv) {
-            teaser_skeletons[iv] = std::vector<long>();
-
-            long nelements;
-            if (fread(&nelements, sizeof(long), 1, fp) != 1) return 0;
-            for (long ie = 0; ie < nelements; ++ie) {
-                long element;
-                if (fread(&element, sizeof(long), 1, fp) != 1) return 0;
-                teaser_skeletons[iv].push_back(element);
-            }
-        }
-        fclose(fp);
-    }
-
-    if (astar_expansion) return 1;
-
-    if (benchmark) sprintf(input_filename, "benchmarks/skeleton/%s-thinning-%03ldx%03ldx%03ld-endpoint-vectors.vec", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z]);
-    else sprintf(input_filename, "skeletons/%s/thinning-%03ldx%03ldx%03ld-endpoint-vectors.vec", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z]);
-
-    fp = fopen(input_filename, "rb");
-    if (fp) {
-        if (fread(&input_grid_size[IB_Z], sizeof(long), 1, fp) != 1) return 0;
-        if (fread(&input_grid_size[IB_Y], sizeof(long), 1, fp) != 1) return 0;
-        if (fread(&input_grid_size[IB_X], sizeof(long), 1, fp) != 1) return 0;
-        if (fread(&skeleton_maximum_segmentation, sizeof(long), 1, fp) != 1) return 0;
-        assert (input_grid_size[IB_Z] == grid_size[IB_Z] and input_grid_size[IB_Y] == grid_size[IB_Y] and input_grid_size[IB_X] == grid_size[IB_X]);
-        assert (skeleton_maximum_segmentation == maximum_segmentation);
-
-        thinning_endpoint_vectors = new std::unordered_map<long, R3Vector>[maximum_segmentation];
+        endpoint_vectors = new std::unordered_map<long, R3Vector>[maximum_segmentation];
         for (long is = 0; is < maximum_segmentation; ++is)
-            thinning_endpoint_vectors[is] = std::unordered_map<long, R3Vector>();
+            endpoint_vectors[is] = std::unordered_map<long, R3Vector>();
 
         for (long is = 0; is < maximum_segmentation; ++is) {
             long nendpoints;
@@ -374,43 +231,9 @@ ReadSkeletonData(void)
                 if (fread(&vy, sizeof(double), 1, fp) != 1) return 0;
                 if (fread(&vx, sizeof(double), 1, fp) != 1) return 0;
 
-                thinning_endpoint_vectors[is][endpoint] = R3Vector(vx, vy, vz);
+                endpoint_vectors[is][endpoint] = R3Vector(vx, vy, vz);
             }
         }
-
-        fclose(fp);
-    }
-
-    if (benchmark) sprintf(input_filename, "benchmarks/skeleton/%s-medial-axis-%03ldx%03ldx%03ld-endpoint-vectors.vec", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z]);
-    else sprintf(input_filename, "skeletons/%s/medial-axis-%03ldx%03ldx%03ld-endpoint-vectors.vec", prefix, downsample_resolution[IB_X], downsample_resolution[IB_Y], downsample_resolution[IB_Z]);
-
-    fp = fopen(input_filename, "rb");
-    if (fp) {
-        if (fread(&input_grid_size[IB_Z], sizeof(long), 1, fp) != 1) return 0;
-        if (fread(&input_grid_size[IB_Y], sizeof(long), 1, fp) != 1) return 0;
-        if (fread(&input_grid_size[IB_X], sizeof(long), 1, fp) != 1) return 0;
-        if (fread(&skeleton_maximum_segmentation, sizeof(long), 1, fp) != 1) return 0;
-        assert (input_grid_size[IB_Z] == grid_size[IB_Z] and input_grid_size[IB_Y] == grid_size[IB_Y] and input_grid_size[IB_X] == grid_size[IB_X]);
-        assert (skeleton_maximum_segmentation == maximum_segmentation);
-
-        medial_endpoint_vectors = new std::unordered_map<long, R3Vector>[maximum_segmentation];
-        for (long is = 0; is < maximum_segmentation; ++is)
-            medial_endpoint_vectors[is] = std::unordered_map<long, R3Vector>();
-  
-        for (long is = 0; is < maximum_segmentation; ++is) {
-            long nendpoints;
-            if (fread(&nendpoints, sizeof(long), 1, fp) != 1) return 0;
-            for (long ie = 0; ie < nendpoints; ++ie) {
-                long endpoint;
-                double vx, vy, vz;
-                if (fread(&endpoint, sizeof(long), 1, fp) != 1) return 0;
-                if (fread(&vz, sizeof(double), 1, fp) != 1) return 0;
-                if (fread(&vy, sizeof(double), 1, fp) != 1) return 0;
-                if (fread(&vx, sizeof(double), 1, fp) != 1) return 0;
-
-                medial_endpoint_vectors[is][endpoint] = R3Vector(vx, vy, vz);
-            }
-        }      
 
         fclose(fp);
     }
@@ -427,16 +250,9 @@ static int ReadData(void)
     RNTime start_time;
     start_time.Read();
 
-    if (benchmark) {
-        R3Grid **gold_grids = RNReadH5File(meta_data.gold_filename, meta_data.gold_dataset);
-        grid = gold_grids[0];
-        delete[] gold_grids;
-    }
-    else {
-        R3Grid **rhoana_grids = RNReadH5File(meta_data.rhoana_filename, meta_data.rhoana_dataset);
-        grid = rhoana_grids[0];
-        delete[] rhoana_grids;
-    }
+    R3Grid **rhoana_grids = RNReadH5File(meta_data.rhoana_filename, meta_data.rhoana_dataset);
+    grid = rhoana_grids[0];
+    delete[] rhoana_grids;
     
     grid_size[IB_X] = grid->XResolution();
     grid_size[IB_Y] = grid->YResolution();
@@ -566,16 +382,7 @@ static void DrawSegment(int segment_index)
 
 static void DrawSkeleton(int segment_index)
 {
-    std::vector<long> *skeletons;
-    if (skeleton_type == 0) skeletons = thinning_skeletons;
-    else if (skeleton_type == 1) skeletons = medial_skeletons;
-    else if (skeleton_type == 2) skeletons = teaser_skeletons;
-    else return;
     if (!skeletons) return;
-
-    std::unordered_map<long, R3Vector> *endpoint_vectors = NULL;
-    if (skeleton_type == 0) endpoint_vectors = thinning_endpoint_vectors;
-    else if (skeleton_type == 1) endpoint_vectors = medial_endpoint_vectors;
 
     // sizes for skeleton joints
     const double joint_size = 4;
@@ -831,17 +638,6 @@ void GLUTKeyboard(unsigned char key, int x, int y)
 
     // keys regardless of projection status
     switch(key) {
-        case 'A':
-        case 'a': {
-            astar_expansion_index = (astar_expansion_index + 1) % nastar_expansions;
-
-            astar_expansion = astar_expansions[astar_expansion_index];
-
-            ReadSkeletonData();
-
-            break;
-        }
-
         case 'B':
         case 'b': {
             show_bbox = 1 - show_bbox;
@@ -851,38 +647,6 @@ void GLUTKeyboard(unsigned char key, int x, int y)
         case 'C':
         case 'c': {
             color_cycle = (color_cycle + 1) % ncolor_opts;
-            break;
-        }
-
-        case 'K':
-        case 'k': {
-            skeleton_type = (skeleton_type + 1) % nskeleton_opts;
-
-            if (skeleton_type == 0) {
-                printf("Thinning\n");
-                printf("  A*: %0.2lf\n", astar_expansion / 10.0);
-            }
-            else if (skeleton_type == 1) {
-                printf("Medial Axis\n");
-                printf("  A*: %0.2lf\n", astar_expansion / 10.0);
-            }
-            else if (skeleton_type == 2) {
-                printf("TEASER:\n");
-                printf("  Scale: %0.2lf\n", teaser_scale / 10.0);
-                printf("  Buffer: %ld\n", teaser_buffer);
-            }
-
-            break;
-        }
-
-        case 'R': 
-        case 'r': {
-            resolution_index = (resolution_index + 1) % nresolutions;
-            
-            downsample_resolution = resolutions[resolution_index];
-
-            ReadSkeletonData();
-
             break;
         }
 
@@ -905,28 +669,6 @@ void GLUTKeyboard(unsigned char key, int x, int y)
             printf("  Height:  %d\n", viewport.Height());
             printf("viewer = new R3Viewer(R3Camera(R3Point(%lf, %lf, %lf), R3Vector(%lf, %lf, %lf), R3Vector(%lf, %lf, %lf), %lf, %lf, %lf, %lf), R2Viewport(%d, %d, %d, %d));\n", camera.Origin().X(), camera.Origin().Y(), camera.Origin().Z(), 
                 camera.Towards().X(), camera.Towards().Y(), camera.Towards().Z(), camera.Up().X(), camera.Up().Y(), camera.Up().Z(), camera.XFOV(), camera.YFOV(), camera.Near(), camera.Far(), viewport.XMin(), viewport.YMin(), viewport.Width(), viewport.Height());
-            break;
-        }
-
-        case 'S': 
-        case 's': {
-            teaser_scale_index = (teaser_scale_index + 1) % nteaser_scales;
-
-            teaser_scale = teaser_scales[teaser_scale_index];
-
-            ReadSkeletonData();
-
-            break;
-        }
-
-        case 'T': 
-        case 't': {
-            teaser_buffer_index = (teaser_buffer_index + 1) % nteaser_buffers;
-
-            teaser_buffer = teaser_buffers[teaser_buffer_index];
-
-            ReadSkeletonData();
-
             break;
         }
 
@@ -1057,7 +799,6 @@ static int ParseArgs(int argc, char** argv)
         if((*argv)[0] == '-') {
             if (!strcmp(*argv, "-v")) print_verbose = 1;
             else if (!strcmp(*argv, "-debug")) print_debug = 1;
-            else if (!strcmp(*argv, "-benchmark")) benchmark = 1;
             else if (!strcmp(*argv, "-start_index")) { argv++; argc--; segmentation_index = atoi(*argv); }
             else { fprintf(stderr, "Invalid program argument: %s\n", *argv); return 0; }
         } else {
